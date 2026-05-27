@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGuard // HTTP Security & SSL Configuration Auditor</title>
+    <meta name="description" content="Validate security headers and SSL configuration of websites to prevent data exposure and cyber risks.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="glow-bg"></div>
+    
+    <header class="app-header">
+        <div class="logo">
+            <span class="shield-icon">🛡️</span>
+            <h1>Web<span>Guard</span></h1>
+        </div>
+        <p class="tagline">HTTP Headers &amp; TLS Configuration Auditor</p>
+    </header>
+
+    <main class="container">
+        <!-- Search & Submission Section -->
+        <section class="search-section card">
+            <h2>Audit Target Website</h2>
+            <p class="search-desc">Enter any website URL or domain name below. WebGuard will inspect its publicly available HTTP response headers and SSL/TLS certificate configurations.</p>
+            <form id="auditForm" class="search-form">
+                <div class="input-group">
+                    <input type="text" id="targetUrl" placeholder="e.g., example.com or https://google.com" required autocomplete="off">
+                    <button type="submit" id="submitBtn">
+                        <span class="btn-text">Audit Website</span>
+                        <span class="loader hidden"></span>
+                    </button>
+                </div>
+            </form>
+            <div id="errorMessage" class="error-msg hidden"></div>
+        </section>
+
+        <!-- Loading Skeleton -->
+        <section id="loadingSkeleton" class="skeleton-section hidden">
+            <div class="skeleton card skeleton-header"></div>
+            <div class="skeleton-grid">
+                <div class="skeleton card skeleton-block"></div>
+                <div class="skeleton card skeleton-block"></div>
+            </div>
+        </section>
+
+        <!-- Results Section (Initially Hidden) -->
+        <section id="resultsSection" class="results-section hidden">
+            <!-- Header Stats Card -->
+            <div class="summary-card card">
+                <div class="grade-container">
+                    <div class="grade-ring" id="gradeRing">
+                        <span class="grade-value" id="gradeValue">A</span>
+                    </div>
+                </div>
+                <div class="stats-container">
+                    <h3 id="resultDomain">domain.com</h3>
+                    <div class="badge-row">
+                        <span class="badge" id="sslBadge">SSL Secure</span>
+                        <span class="badge" id="scoreBadge">Score: 85/100</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-label">
+                            <span>Header Configuration Strength</span>
+                            <span id="scorePercentage">85%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="scoreBar" style="width: 85%;"></div>
+                        </div>
+                    </div>
+                    <div class="stats-summary">
+                        <div class="stat-item">
+                            <span class="stat-num" id="headersFoundCount">0</span>
+                            <span class="stat-lbl">Headers Configured</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-num text-danger" id="headersMissingCount">0</span>
+                            <span class="stat-lbl">Headers Missing</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SSL/TLS Certificate Certificate Card -->
+            <div class="ssl-card card" id="sslInfoCard">
+                <h3>TLS/SSL Certificate Details</h3>
+                <div class="ssl-grid">
+                    <div class="ssl-info-item">
+                        <span class="ssl-info-label">Issuer Organization</span>
+                        <span class="ssl-info-value" id="sslIssuer">Let's Encrypt</span>
+                    </div>
+                    <div class="ssl-info-item">
+                        <span class="ssl-info-label">Subject Common Name</span>
+                        <span class="ssl-info-value" id="sslSubject">domain.com</span>
+                    </div>
+                    <div class="ssl-info-item">
+                        <span class="ssl-info-label">Connection Protocol</span>
+                        <span class="ssl-info-value" id="sslProtocol">TLSv1.3</span>
+                    </div>
+                    <div class="ssl-info-item">
+                        <span class="ssl-info-label">Cipher Suite</span>
+                        <span class="ssl-info-value" id="sslCipher">AES_256_GCM</span>
+                    </div>
+                    <div class="ssl-info-item">
+                        <span class="ssl-info-label">Certificate Expiry</span>
+                        <span class="ssl-info-value" id="sslExpiry">In 45 Days (2026-07-15)</span>
+                    </div>
+                    <div class="ssl-info-item">
+                        <span class="ssl-info-label">Status</span>
+                        <span class="ssl-badge secure" id="sslStatusBadge">Active &amp; Secure</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Configuration Audits -->
+            <div class="advanced-audits-grid">
+                <!-- DNS Security Card -->
+                <div class="card dns-card">
+                    <h3>DNS Security & Email Spoofing</h3>
+                    <div class="dns-grid" id="dnsGrid">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <!-- Cookie Security Card -->
+                <div class="card cookie-card">
+                    <h3>Cookie Security Analyzer</h3>
+                    <div class="cookie-list" id="cookieList">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <!-- SRI & Deep CSP Card -->
+                <div class="card deeper-audits-card">
+                    <h3>Advanced Inspections</h3>
+                    <ul class="advanced-list" id="advancedList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Headers Analysis Breakdown -->
+            <div class="details-section">
+                <h3>HTTP Header Audits</h3>
+                <div class="headers-list" id="headersList">
+                    <!-- Dynamic Header Cards go here -->
+                </div>
+            </div>
+
+            <!-- Configuration & Remediation Config Templates -->
+            <div class="remediation-section card">
+                <h3>Security Remediation Setup</h3>
+                <p class="remediation-desc">Implement recommendations for missing headers in your server infrastructure. Choose your framework below to review configurations:</p>
+                <div class="tabs-header">
+                    <button class="tab-btn active" data-tab="nginx">Nginx</button>
+                    <button class="tab-btn" data-tab="apache">Apache</button>
+                    <button class="tab-btn" data-tab="express">Node.js (Express)</button>
+                    <button class="tab-btn" data-tab="nextjs">Next.js</button>
+                </div>
+                <div class="tabs-body">
+                    <div class="tab-pane active" id="tab-nginx">
+                        <pre><code id="code-nginx"># Nginx config snippets will load here</code></pre>
+                        <button class="copy-btn" onclick="copyConfig('code-nginx')">Copy Configuration</button>
+                    </div>
+                    <div class="tab-pane" id="tab-apache">
+                        <pre><code id="code-apache"># Apache config snippets will load here</code></pre>
+                        <button class="copy-btn" onclick="copyConfig('code-apache')">Copy Configuration</button>
+                    </div>
+                    <div class="tab-pane" id="tab-express">
+                        <pre><code id="code-express"># Express config snippets will load here</code></pre>
+                        <button class="copy-btn" onclick="copyConfig('code-express')">Copy Configuration</button>
+                    </div>
+                    <div class="tab-pane" id="tab-nextjs">
+                        <pre><code id="code-nextjs"># Next.js config snippets will load here</code></pre>
+                        <button class="copy-btn" onclick="copyConfig('code-nextjs')">Copy Configuration</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <p>&copy; 2026 WebGuard Auditor. Dedicated to raising security standard configurations globally.</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

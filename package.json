@@ -1,0 +1,16 @@
+{
+  "name": "webguard-auditor",
+  "version": "1.0.0",
+  "description": "Defensive HTTP Security Headers and SSL configuration auditor dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cheerio": "^1.2.0",
+    "express": "^4.21.1"
+  },
+  "private": true
+}

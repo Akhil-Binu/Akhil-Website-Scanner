@@ -83,7 +83,6 @@ function calculateGrade(score) {
 function getTlsDetails(hostname) {
   return new Promise((resolve) => {
     const options = { host: hostname, port: 443, servername: hostname, rejectUnauthorized: false };
-
     try {
       const socket = tls.connect(options, () => {
         const cert = socket.getPeerCertificate(true);
@@ -91,9 +90,7 @@ function getTlsDetails(hostname) {
         const cipher = socket.getCipher();
         socket.destroy();
 
-        if (!cert || Object.keys(cert).length === 0) {
-          return resolve({ success: false, error: 'No certificate returned' });
-        }
+        if (!cert || Object.keys(cert).length === 0) return resolve({ success: false, error: 'No certificate' });
 
         const validFrom = new Date(cert.valid_from);
         const validTo = new Date(cert.valid_to);
@@ -104,33 +101,23 @@ function getTlsDetails(hostname) {
         let tlsStatus = 'Secure';
         if (protocol === 'TLSv1' || protocol === 'TLSv1.1') tlsStatus = 'Weak (Deprecated)';
 
-        // Deep TLS: SAN and OCSP extraction
         let sans = [];
-        if (cert.subjectaltname) {
-            sans = cert.subjectaltname.split(', ').map(s => s.replace('DNS:', ''));
-        }
+        if (cert.subjectaltname) sans = cert.subjectaltname.split(', ').map(s => s.replace('DNS:', ''));
         let ocsp = [];
-        if (cert.infoAccess && cert.infoAccess['OCSP - URI']) {
-            ocsp = cert.infoAccess['OCSP - URI'];
-        }
+        if (cert.infoAccess && cert.infoAccess['OCSP - URI']) ocsp = cert.infoAccess['OCSP - URI'];
+        
+        // Basic Chain verification
+        const issuerName = cert.issuer.O || cert.issuer.CN || 'Unknown';
+        const subjectName = cert.subject.O || cert.subject.CN || 'Unknown';
+        const isSelfSigned = issuerName === subjectName;
 
         resolve({
-          success: true,
-          issuer: cert.issuer.O || cert.issuer.CN || 'Unknown',
-          subject: cert.subject.CN || 'Unknown',
-          validFrom: cert.valid_from,
-          validTo: cert.valid_to,
-          daysRemaining,
-          isExpired,
-          protocol,
-          cipherName: cipher.name,
-          cipherVersion: cipher.version,
-          tlsStatus,
-          sans,
-          ocsp
+          success: true, issuer: issuerName, subject: subjectName,
+          validFrom: cert.valid_from, validTo: cert.valid_to,
+          daysRemaining, isExpired, protocol, cipherName: cipher.name, cipherVersion: cipher.version,
+          tlsStatus, sans, ocsp, isSelfSigned
         });
       });
-
       socket.on('error', (err) => { socket.destroy(); resolve({ success: false, error: err.message }); });
       socket.setTimeout(6000, () => { socket.destroy(); resolve({ success: false, error: 'Timeout' }); });
     } catch (e) { resolve({ success: false, error: e.message }); }
@@ -145,8 +132,7 @@ function analyzeCookies(setCookieHeaders) {
     const parts = cookieStr.split(';').map(p => p.trim());
     const name = parts[0].split('=')[0];
     cookies.push({
-      name,
-      secure: cookieStr.toLowerCase().includes('secure'),
+      name, secure: cookieStr.toLowerCase().includes('secure'),
       httpOnly: cookieStr.toLowerCase().includes('httponly'),
       sameSite: (cookieStr.match(/samesite=(strict|lax|none)/i) || [, 'Missing'])[1]
     });
@@ -156,18 +142,21 @@ function analyzeCookies(setCookieHeaders) {
 
 function evaluateDeepCSP(cspHeader) {
   const issues = [];
-  if (!cspHeader) return issues;
+  let hasFrameAncestors = false;
+  if (!cspHeader) return { issues, hasFrameAncestors };
+  
   const cspLower = cspHeader.toLowerCase();
   if (cspLower.includes('unsafe-inline')) issues.push({ severity: 'High', issue: 'Uses unsafe-inline (Allows inline scripts/styles)' });
   if (cspLower.includes('unsafe-eval')) issues.push({ severity: 'High', issue: 'Uses unsafe-eval (Allows code execution from strings)' });
   if (cspLower.includes('http:')) issues.push({ severity: 'Medium', issue: 'Allows loading resources over insecure HTTP' });
+  if (cspLower.includes('frame-ancestors')) hasFrameAncestors = true;
   
   cspLower.split(';').map(d => d.trim()).forEach(dir => {
     if ((dir.startsWith('default-src') || dir.startsWith('script-src') || dir.startsWith('object-src')) && dir.includes('*')) {
        issues.push({ severity: 'High', issue: `Wildcard source (*) found in directive: ${dir.split(' ')[0]}` });
     }
   });
-  return issues;
+  return { issues, hasFrameAncestors };
 }
 
 async function checkDnsSecurity(hostname) {
@@ -187,56 +176,53 @@ async function checkDnsSecurity(hostname) {
   return results;
 }
 
-async function checkSecurityTxt(targetProtocol, hostname) {
-  try {
-    const res = await axios.get(`${targetProtocol}//${hostname}/.well-known/security.txt`, { timeout: 3000, validateStatus: () => true });
-    if (res.status === 200 && (res.data.includes('Contact:') || res.data.includes('contact:'))) return { found: true };
-  } catch (e) { }
-  return { found: false };
+async function checkInfrastructure(baseUrl) {
+    const infra = { robots: false, sitemap: false, crossdomain: false };
+    const ping = async (path) => {
+        try {
+            const res = await axios.get(baseUrl + path, { timeout: 2500, validateStatus: () => true });
+            return res.status === 200;
+        } catch(e) { return false; }
+    };
+    
+    infra.robots = await ping('/robots.txt');
+    infra.sitemap = await ping('/sitemap.xml');
+    infra.crossdomain = await ping('/crossdomain.xml') || await ping('/clientaccesspolicy.xml');
+    
+    return infra;
 }
 
-function checkInfoLeakage(headers) {
-  const leaks = [];
-  if (headers['x-powered-by']) leaks.push(`X-Powered-By reveals backend stack: ${headers['x-powered-by']}`);
-  if (headers['server']) leaks.push(`Server header reveals software version: ${headers['server']}`);
-  if (headers['x-aspnet-version']) leaks.push(`X-AspNet-Version reveals .NET version: ${headers['x-aspnet-version']}`);
-  return leaks;
+async function checkHstsPreload(domain) {
+    try {
+        const res = await axios.get(`https://hstspreload.org/api/v2/status?domain=${domain}`, { timeout: 3000, validateStatus: () => true });
+        if (res.data && res.data.status === 'preloaded') return true;
+    } catch(e) {}
+    return false;
 }
 
-function checkCors(headers, evilOrigin) {
-  const corsHeader = headers['access-control-allow-origin'];
-  if (!corsHeader) return { vulnerable: false, message: 'No CORS headers detected (Safe default)' };
-  if (corsHeader === evilOrigin) return { vulnerable: true, message: `Server reflected malicious origin ${evilOrigin}` };
-  if (corsHeader === '*') return { vulnerable: true, message: `Server allows any origin (*).` };
-  return { vulnerable: false, message: `CORS header restricted to: ${corsHeader}` };
+async function getSubdomains(domain) {
+    try {
+        const res = await axios.get(`https://crt.sh/?q=%.${domain}&output=json`, { timeout: 5000, validateStatus: () => true });
+        if (res.data && Array.isArray(res.data)) {
+            const subs = new Set(res.data.map(d => d.name_value.toLowerCase().trim()));
+            return Array.from(subs).slice(0, 15); // limit to 15
+        }
+    } catch(e) {}
+    return [];
 }
 
 function analyzeCacheSecurity(headers) {
     const cacheControl = headers['cache-control'] || '';
     const pragma = headers['pragma'] || '';
     const expires = headers['expires'] || '';
-    
     let isCached = true;
     let posture = 'Public / Cached';
-    let vulnerable = false;
-
     if (cacheControl.includes('no-store') || cacheControl.includes('private')) {
-        isCached = false;
-        posture = 'Private / No-Store';
+        isCached = false; posture = 'Private / No-Store';
     }
-
-    if (isCached && (cacheControl.includes('public') || cacheControl === '')) {
-        // Just flag as generally cached, warning if it was meant to be sensitive
-        vulnerable = true; 
-    }
-
     return {
-        cacheControl: cacheControl || 'Missing',
-        pragma: pragma || 'Missing',
-        expires: expires || 'Missing',
-        isCached,
-        posture,
-        message: vulnerable ? 'Response is cacheable. Ensure this page contains no sensitive/authenticated data.' : 'Securely restricts downstream caching.'
+        cacheControl: cacheControl || 'Missing', pragma: pragma || 'Missing', expires: expires || 'Missing',
+        isCached, posture, message: (isCached && cacheControl) ? 'Response is cacheable.' : 'Securely restricts downstream caching.'
     };
 }
 
@@ -244,92 +230,140 @@ async function checkHttpMethods(targetUrl) {
     try {
         const res = await axios.options(targetUrl, { timeout: 3000, validateStatus: () => true });
         const allowed = res.headers['access-control-allow-methods'] || res.headers['allow'] || '';
-        if (!allowed) return { methods: 'Not explicitly defined', vulnerable: false };
-        
+        if (!allowed) return { methods: 'Not defined', vulnerable: false };
         const vulnMethods = ['TRACE', 'PUT', 'DELETE', 'TRACK'];
         const foundVuln = vulnMethods.filter(m => allowed.toUpperCase().includes(m));
-        
-        return { 
-            methods: allowed, 
-            vulnerable: foundVuln.length > 0, 
-            message: foundVuln.length > 0 ? `Dangerous methods enabled: ${foundVuln.join(', ')}` : 'No dangerous HTTP methods detected.'
-        };
-    } catch (e) {
-        return { methods: 'Failed to retrieve', vulnerable: false, message: 'Server blocked OPTIONS request.' };
-    }
+        return { methods: allowed, vulnerable: foundVuln.length > 0 };
+    } catch (e) { return { methods: 'Failed', vulnerable: false }; }
 }
 
-async function checkDirectoryListing(targetProtocol, hostname) {
+async function checkDirectoryListing(baseUrl) {
     try {
-        const res = await axios.get(`${targetProtocol}//${hostname}/assets/`, { timeout: 3000, validateStatus: () => true });
+        const res = await axios.get(`${baseUrl}/assets/`, { timeout: 3000, validateStatus: () => true });
         const dataStr = String(res.data);
-        if (res.status === 200 && (dataStr.includes('<title>Index of') || dataStr.includes('Index of /assets'))) {
-            return { found: true, message: 'Directory listing is enabled on /assets/ exposing internal file structures.' };
-        }
+        if (res.status === 200 && (dataStr.includes('<title>Index of') || dataStr.includes('Index of /assets'))) return true;
     } catch (e) {}
-    return { found: false, message: 'Directory listing is securely disabled.' };
+    return false;
+}
+
+async function checkCors(baseUrl) {
+    try {
+        const res = await axios.options(baseUrl, { headers: { 'Origin': 'https://evil-origin.com' }, timeout: 3000, validateStatus: () => true });
+        const acao = res.headers['access-control-allow-origin'];
+        if (acao === '*' || acao === 'https://evil-origin.com') return { vulnerable: true, message: `Reflected/Wildcard CORS: ${acao}` };
+    } catch(e) {}
+    return { vulnerable: false, message: 'CORS policy secure.' };
+}
+
+function checkInfoLeakage(headers) {
+    const leaks = [];
+    if (headers['x-powered-by']) leaks.push(`X-Powered-By: ${headers['x-powered-by']}`);
+    if (headers['server']) leaks.push(`Server version: ${headers['server']}`);
+    return leaks;
+}
+
+async function checkSecurityTxt(baseUrl) {
+    try {
+        const res = await axios.get(`${baseUrl}/.well-known/security.txt`, { timeout: 2000, validateStatus: () => true });
+        if (res.status === 200 && String(res.data).toLowerCase().includes('contact')) return { found: true };
+    } catch(e) {}
+    return { found: false };
+}
+
+function identifyTech(headers, html) {
+    const tech = [];
+    if (headers['x-powered-by']) tech.push(`X-Powered-By: ${headers['x-powered-by']}`);
+    if (headers['server']) tech.push(`Server: ${headers['server']}`);
+    if (html) {
+        const $ = cheerio.load(html);
+        const gen = $('meta[name="generator"]').attr('content');
+        if (gen) tech.push(`Generator: ${gen}`);
+        if (html.includes('wp-content')) tech.push('WordPress (implied)');
+        if (html.includes('__NEXT_DATA__')) tech.push('Next.js (implied)');
+        if (html.includes('data-reactroot')) tech.push('React (implied)');
+    }
+    return [...new Set(tech)];
 }
 
 function parseHtmlSecurity(html, targetHostname, protocol) {
-  const results = { sri: { totalExternalScripts: 0, scriptsMissingSRI: 0, totalExternalStyles: 0, stylesMissingSRI: 0 }, mixedContent: [], libraries: [], seo: [] };
+  const results = { 
+      sri: { total: 0, missing: 0 }, mixedContent: [], libraries: [], seo: [], 
+      domSec: { formsInsecure: 0, pwdInsecure: 0, hiddenLeaks: 0, sinks: 0, secrets: [] },
+      sourceMaps: false
+  };
+  
   if (!html) return results;
   const $ = cheerio.load(html);
   
-  const checkMixed = (url, tag) => {
-    if (protocol === 'https:' && url && url.startsWith('http://')) results.mixedContent.push(`Insecure ${tag} loaded over HTTP: ${url}`);
-  };
-
-  $('img[src]').each((i, el) => checkMixed($(el).attr('src'), 'image'));
-  $('iframe[src]').each((i, el) => checkMixed($(el).attr('src'), 'iframe'));
+  // Secrets Heuristic
+  if (html.match(/AKIA[0-9A-Z]{16}/)) results.domSec.secrets.push('AWS Access Key (AKIA) Pattern Found');
+  if (html.match(/AIza[0-9A-Za-z-_]{35}/)) results.domSec.secrets.push('Google API Key Pattern Found');
+  if (html.match(/eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*/)) results.domSec.secrets.push('JWT Pattern Found');
   
-  $('script[src]').each((i, el) => {
-    const src = $(el).attr('src');
+  // DOM Sinks & Source Maps
+  if (html.includes('//# sourceMappingURL=')) results.sourceMaps = true;
+  $('script:not([src])').each((i, el) => {
+      const code = $(el).html();
+      if (code) {
+          if (code.includes('innerHTML') || code.includes('document.write') || code.match(/eval\s*\(/)) {
+              results.domSec.sinks++;
+          }
+      }
+  });
+
+  // Forms
+  $('form').each((i, el) => {
+      const action = $(el).attr('action');
+      if (!action || (action.startsWith('http://') && protocol === 'https:')) results.domSec.formsInsecure++;
+  });
+
+  // Passwords
+  $('input[type="password"]').each((i, el) => {
+      const auto = $(el).attr('autocomplete');
+      if (!auto || (auto !== 'off' && auto !== 'new-password')) results.domSec.pwdInsecure++;
+  });
+
+  // Hidden Inputs
+  $('input[type="hidden"]').each((i, el) => {
+      const val = $(el).attr('value');
+      if (val && val.length > 100) results.domSec.hiddenLeaks++;
+  });
+
+  // Mixed Content & SRI & Libraries
+  const checkMixed = (url) => { if (protocol === 'https:' && url && url.startsWith('http://')) results.mixedContent.push(url); };
+  
+  const sriAnalysis = { scriptsMissingSRI: 0, stylesMissingSRI: 0, totalExternalScripts: 0, totalExternalStyles: 0 };
+  
+  $('img[src], iframe[src], script[src], link[rel="stylesheet"]').each((i, el) => {
+    const src = $(el).attr('src') || $(el).attr('href');
     if (!src) return;
-    checkMixed(src, 'script');
-    
-    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('//')) {
-      if (!src.includes(targetHostname)) {
-        results.sri.totalExternalScripts++;
-        if (!$(el).attr('integrity')) results.sri.scriptsMissingSRI++;
-      }
+    checkMixed(src);
+    if (el.tagName.toLowerCase() === 'script') {
+        if (src.match(/^https?:\/\//) && !src.includes(targetHostname)) {
+            sriAnalysis.totalExternalScripts++;
+            if (!$(el).attr('integrity')) sriAnalysis.scriptsMissingSRI++;
+        }
+        const fn = src.split('/').pop().toLowerCase();
+        [{n:'jQuery',r:/jquery[-.]([0-9.]+)/}, {n:'React',r:/react(?:-dom)?[-.@]([0-9.]+)/}, {n:'Vue',r:/vue[-.@]([0-9.]+)/}].forEach(p => {
+            const m = fn.match(p.r); if (m) results.libraries.push({ name: p.n, version: m[1] });
+        });
     }
-    
-    const filename = src.split('/').pop().toLowerCase();
-    const libPatterns = [
-      { name: 'jQuery', regex: /jquery[-.]([0-9.]+)/ },
-      { name: 'React', regex: /react(?:-dom)?[-.@]([0-9.]+)/ },
-      { name: 'Vue', regex: /vue[-.@]([0-9.]+)/ },
-      { name: 'Bootstrap', regex: /bootstrap[-.@]([0-9.]+)/ },
-      { name: 'Angular', regex: /angular[-.@]([0-9.]+)/ }
-    ];
-    libPatterns.forEach(pattern => {
-      const match = filename.match(pattern.regex);
-      if (match) results.libraries.push({ name: pattern.name, version: match[1], file: filename });
-    });
-  });
-  
-  $('link[rel="stylesheet"][href]').each((i, el) => {
-    const href = $(el).attr('href');
-    if (!href) return;
-    checkMixed(href, 'stylesheet');
-    if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('//')) {
-      if (!href.includes(targetHostname)) {
-        results.sri.totalExternalStyles++;
-        if (!$(el).attr('integrity')) results.sri.stylesMissingSRI++;
-      }
+    if (el.tagName.toLowerCase() === 'link') {
+        if (src.match(/^https?:\/\//) && !src.includes(targetHostname)) {
+            sriAnalysis.totalExternalStyles++;
+            if (!$(el).attr('integrity')) sriAnalysis.stylesMissingSRI++;
+        }
     }
   });
+  results.sriAnalysis = sriAnalysis;
 
-  // SEO & Social Graph Metadata Spillage Check
+  // SEO
   $('meta').each((i, el) => {
       const prop = $(el).attr('property') || $(el).attr('name');
       const content = $(el).attr('content');
       if (prop && content && (prop.startsWith('og:') || prop.startsWith('twitter:'))) {
-          let hasSpillage = false;
-          if (content.match(/(Exception|Error:|Stack trace|sql syntax|10\.\d\.\d\.\d|192\.168\.\d)/i)) {
-              hasSpillage = true;
-          }
-          results.seo.push({ property: prop, content: content.substring(0, 80) + (content.length > 80 ? '...' : ''), spillage: hasSpillage });
+          const spillage = !!content.match(/(Exception|Error:|Stack trace|10\.\d\.\d\.\d)/i);
+          results.seo.push({ property: prop, spillage });
       }
   });
   
@@ -338,99 +372,92 @@ function parseHtmlSecurity(html, targetHostname, protocol) {
 
 app.post('/api/analyze', async (req, res) => {
   let targetUrl = req.body.url;
-  if (!targetUrl) return res.status(400).json({ error: 'URL parameter is required.' });
+  if (!targetUrl) return res.status(400).json({ error: 'URL required' });
   if (!/^https?:\/\//i.test(targetUrl)) targetUrl = 'https://' + targetUrl;
 
   let parsedUrl;
-  try {
-    parsedUrl = new urlModule.URL(targetUrl);
-  } catch (err) {
-    return res.status(400).json({ error: 'Invalid URL format.' });
-  }
+  try { parsedUrl = new urlModule.URL(targetUrl); } catch (err) { return res.status(400).json({ error: 'Invalid URL' }); }
 
   const hostname = parsedUrl.hostname;
   const protocol = parsedUrl.protocol;
-  const evilOrigin = 'https://evil-domain-test.com';
+  const baseUrl = `${protocol}//${hostname}`;
 
   try {
     const response = await axios.get(parsedUrl.toString(), {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WebGuardAuditor/4.0', 'Origin': evilOrigin },
+      headers: { 'User-Agent': 'Mozilla/5.0 WebGuardAuditor/5.0 Ultimate', 'Origin': 'https://evil-origin.com' },
       timeout: 15000, maxRedirects: 5, validateStatus: () => true
     });
 
     const headers = response.headers;
     const auditResults = [];
     let currentScore = 10; 
-
-    const isHttps = protocol.toLowerCase() === 'https:';
+    const isHttps = protocol === 'https:';
     if (isHttps) currentScore += 15;
 
     for (const [headerKey, config] of Object.entries(SECURITY_HEADERS)) {
-      const headerVal = headers[headerKey];
-      const present = !!headerVal;
+      const present = !!headers[headerKey];
       if (present) currentScore += config.score;
-
-      auditResults.push({
-        key: headerKey, name: config.name, description: config.description, status: present ? 'Configured' : 'Missing',
-        value: headerVal || null, scorePoints: present ? config.score : 0, maxPoints: config.score,
+      auditResults.push({ 
+        key: headerKey, name: config.name, description: config.description,
+        status: present ? 'Configured' : 'Missing', 
+        scorePoints: present ? config.score : 0, maxPoints: config.score,
         nginx: config.nginx, apache: config.apache, express: config.express, nextjs: config.nextjs
       });
     }
 
-    // Advanced Checks
+    // 15 Modules + Legacy Pro execution
+    const [
+      infra, hstsPreloaded, subdomains, dnsSecurity, httpMethods, dirListing, cors, securityTxt
+    ] = await Promise.all([
+      checkInfrastructure(baseUrl),
+      isHttps ? checkHstsPreload(hostname) : false,
+      getSubdomains(hostname),
+      checkDnsSecurity(hostname),
+      checkHttpMethods(baseUrl),
+      checkDirectoryListing(baseUrl),
+      checkCors(baseUrl),
+      checkSecurityTxt(baseUrl)
+    ]);
+
     const cookieAnalysis = analyzeCookies(headers['set-cookie']);
-    const cspIssues = evaluateDeepCSP(headers['content-security-policy']);
-    const dnsSecurity = await checkDnsSecurity(hostname);
-    const securityTxt = await checkSecurityTxt(protocol, hostname);
-    const leaks = checkInfoLeakage(headers);
-    const cors = checkCors(headers, evilOrigin);
+    const cspEval = evaluateDeepCSP(headers['content-security-policy']);
     const cacheSecurity = analyzeCacheSecurity(headers);
-    const httpMethods = await checkHttpMethods(parsedUrl.toString());
-    const dirListing = await checkDirectoryListing(protocol, hostname);
+    const htmlSecurity = parseHtmlSecurity(String(response.data), hostname, protocol);
+    const techStack = identifyTech(headers, String(response.data));
+    const leaks = checkInfoLeakage(headers);
     
-    // HTML checks
-    let htmlData = '';
-    if (typeof response.data === 'string') htmlData = response.data;
-    else if (Buffer.isBuffer(response.data)) htmlData = response.data.toString();
-    const htmlSecurity = parseHtmlSecurity(htmlData, hostname, protocol);
+    // Header specific checks
+    const refPolicy = headers['referrer-policy'] || 'Missing';
+    const refInsecure = refPolicy === 'unsafe-url';
 
     let tlsDetails = null;
     if (isHttps) {
       tlsDetails = await getTlsDetails(hostname);
-      if (tlsDetails.success) {
-        if (tlsDetails.isExpired) currentScore -= 30;
-        else if (tlsDetails.tlsStatus.includes('Weak')) currentScore -= 15;
-      } else currentScore -= 20;
-    } else currentScore -= 30;
+      if (tlsDetails.success && tlsDetails.isExpired) currentScore -= 30;
+    }
 
-    // Score adjustments for features
-    if (securityTxt.found) currentScore += 5;
-    if (dnsSecurity.spf.found) currentScore += 5;
-    if (dnsSecurity.dmarc.found) currentScore += 5;
-    
-    cookieAnalysis.forEach(c => { if (!c.secure || !c.httpOnly || c.sameSite === 'Missing') currentScore -= 2; });
-    if (leaks.length > 0) currentScore -= 5;
-    if (cors.vulnerable) currentScore -= 10;
+    // Penalties & Scoring Adjustments
+    if (hstsPreloaded) currentScore += 5;
+    if (infra.robots) currentScore += 2;
+    if (htmlSecurity.domSec.secrets.length > 0) currentScore -= 20;
+    if (htmlSecurity.domSec.sinks > 0) currentScore -= 10;
     if (htmlSecurity.mixedContent.length > 0) currentScore -= 10;
-    if (httpMethods.vulnerable) currentScore -= 15;
-    if (dirListing.found) currentScore -= 15;
 
-    const finalScore = Math.min(100, Math.max(0, currentScore));
-    const grade = calculateGrade(finalScore);
+    const grade = calculateGrade(Math.min(100, Math.max(0, currentScore)));
 
     return res.json({
-      success: true, domain: hostname, score: finalScore, grade,
+      success: true, domain: hostname, score: Math.min(100, Math.max(0, currentScore)), grade,
       headersFound: auditResults.filter(h => h.status === 'Configured').length,
-      headersMissing: auditResults.filter(h => h.status === 'Missing').length,
-      totalHeadersCount: auditResults.length, isHttps, headers: auditResults, tlsDetails,
+      isHttps, headers: auditResults, tlsDetails,
       advanced: {
-        cookies: cookieAnalysis, cspIssues, dnsSecurity, securityTxt, leaks, cors,
-        sriAnalysis: htmlSecurity.sri, mixedContent: htmlSecurity.mixedContent, libraries: htmlSecurity.libraries,
-        cacheSecurity, httpMethods, dirListing, seo: htmlSecurity.seo
+        cookies: cookieAnalysis, cspIssues: cspEval.issues, hasFrameAncestors: cspEval.hasFrameAncestors,
+        dnsSecurity, infra, hstsPreloaded, subdomains, cacheSecurity, httpMethods, dirListing,
+        domSec: htmlSecurity.domSec, sourceMaps: htmlSecurity.sourceMaps, sriAnalysis: htmlSecurity.sriAnalysis,
+        mixedContent: htmlSecurity.mixedContent, libraries: htmlSecurity.libraries, seo: htmlSecurity.seo,
+        techStack, refPolicy, refInsecure, cors, leaks, securityTxt
       }
     });
-
-  } catch (error) { return res.status(500).json({ error: `Could not connect to target server. Error: ${error.message}` }); }
+  } catch (error) { return res.status(500).json({ error: `Connection failed: ${error.message}` }); }
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

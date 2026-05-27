@@ -491,6 +491,120 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         }
+
+        // 9. Infrastructure Assets
+        const infraList = document.getElementById('infraList');
+        if (infraList && advanced.infra) {
+            infraList.innerHTML = '';
+            const addInfra = (name, found) => {
+                infraList.innerHTML += `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>${name}</span>
+                            <span class="status-indicator ${found ? 'missing' : 'configured'}">${found ? 'Found' : 'Missing'}</span>
+                        </div>
+                    </li>`;
+            };
+            addInfra('robots.txt', advanced.infra.robots);
+            addInfra('sitemap.xml', advanced.infra.sitemap);
+            addInfra('crossdomain/clientaccess', advanced.infra.crossdomain);
+        }
+
+        // 10. Tech Fingerprint
+        const techList = document.getElementById('techList');
+        if (techList) {
+            techList.innerHTML = '';
+            if (advanced.techStack && advanced.techStack.length > 0) {
+                advanced.techStack.forEach(t => {
+                    techList.innerHTML += `
+                        <li class="advanced-item">
+                            <div class="advanced-item-title">
+                                <span>Detected Stack</span>
+                                <span class="status-indicator configured">Confirmed</span>
+                            </div>
+                            <div class="advanced-item-desc">${escapeHTML(t)}</div>
+                        </li>`;
+                });
+            } else {
+                techList.innerHTML = '<li class="advanced-item"><div class="advanced-item-desc">No distinct technology signatures found.</div></li>';
+            }
+        }
+
+        // 11. Subdomains & Preload
+        const subList = document.getElementById('subdomainList');
+        if (subList) {
+            subList.innerHTML = `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>HSTS Preload Status</span>
+                        <span class="status-indicator ${advanced.hstsPreloaded ? 'configured' : 'missing'}">${advanced.hstsPreloaded ? 'Preloaded' : 'Not Preloaded'}</span>
+                    </div>
+                </li>
+            `;
+            if (advanced.subdomains && advanced.subdomains.length > 0) {
+                const subStr = advanced.subdomains.map(s => escapeHTML(s)).join('<br>');
+                subList.innerHTML += `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>Discovered Subdomains (crt.sh)</span>
+                            <span class="status-indicator configured">${advanced.subdomains.length} Found</span>
+                        </div>
+                        <div class="advanced-item-desc" style="max-height: 120px; overflow-y: auto;">${subStr}</div>
+                    </li>`;
+            }
+        }
+
+        // 12. DOM Vulnerabilities & Secrets
+        const domList = document.getElementById('domList');
+        if (domList && advanced.domSec) {
+            domList.innerHTML = '';
+            const addDom = (name, count, bad) => {
+                const cls = (count > 0 && bad) ? 'missing' : 'configured';
+                domList.innerHTML += `
+                    <div class="cookie-item">
+                        <div class="cookie-name">${name}</div>
+                        <div class="cookie-flags">
+                            <span class="flag ${cls}">Instances: ${count}</span>
+                        </div>
+                    </div>`;
+            };
+            addDom('Insecure/Missing Form Actions', advanced.domSec.formsInsecure, true);
+            addDom('Insecure Password Inputs', advanced.domSec.pwdInsecure, true);
+            addDom('Large Hidden Inputs (Leaks)', advanced.domSec.hiddenLeaks, true);
+            addDom('Dangerous DOM Sinks (eval, innerHTML)', advanced.domSec.sinks, true);
+            addDom('Source Maps Exposed', advanced.sourceMaps ? 1 : 0, true);
+
+            if (advanced.domSec.secrets.length > 0) {
+                advanced.domSec.secrets.forEach(sec => {
+                    domList.innerHTML += `
+                        <div class="cookie-item" style="border-left: 3px solid var(--danger)">
+                            <div class="cookie-name" style="color:var(--danger)">CRITICAL: Hardcoded Secret</div>
+                            <div class="cookie-flags">
+                                <span>${escapeHTML(sec)}</span>
+                            </div>
+                        </div>`;
+                });
+            }
+        }
+        
+        // Add Referrer Policy and Frame Ancestors to Network List if networkList exists
+        const netList = document.getElementById('networkList');
+        if (netList) {
+             netList.innerHTML += `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>Referrer-Policy Posture</span>
+                        <span class="status-indicator ${advanced.refInsecure ? 'missing' : 'configured'}">${advanced.refInsecure ? 'Vulnerable' : 'Safe'}</span>
+                    </div>
+                    <div class="advanced-item-desc">${escapeHTML(advanced.refPolicy)}</div>
+                </li>
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>Anti-Clickjacking (CSP Frame-Ancestors)</span>
+                        <span class="status-indicator ${advanced.hasFrameAncestors ? 'configured' : 'missing'}">${advanced.hasFrameAncestors ? 'Configured' : 'Missing'}</span>
+                    </div>
+                </li>`;
+        }
     }
 
     function updateGradeRingStyle(grade) {

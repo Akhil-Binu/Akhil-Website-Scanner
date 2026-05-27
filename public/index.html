@@ -630,7 +630,10 @@
             <button id="closeChatBtn" style="background: transparent; border: none; color: white; cursor: pointer; font-size: 16px;">✖</button>
         </div>
         <div id="chatMessages" style="height: 300px; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
-            <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; font-size: 14px;">Hello! I'm your AI auditor. Ask me anything about this scan report!</div>
+            <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; font-size: 14px;">
+                Hello! I'm your AI auditor. Ask me anything! <br><br>
+                <span style="color: #94a3b8; font-size: 12px;"><i>Disclaimer: I can only answer questions about specific vulnerabilities AFTER you run a scan on a website.</i></span>
+            </div>
         </div>
         <div style="padding: 15px; border-top: 1px solid var(--border); display: flex; gap: 10px;">
             <input type="text" id="chatInput" placeholder="Ask a question..." style="flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: rgba(0,0,0,0.2); color: white;">

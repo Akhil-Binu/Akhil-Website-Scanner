@@ -26,17 +26,46 @@
         <!-- Search & Submission Section -->
         <section class="search-section card">
             <h2>Audit Target Website</h2>
-            <p class="search-desc">Enter any website URL or domain name below. Akhil WebGuard will inspect its publicly available HTTP response headers and SSL/TLS certificate configurations.</p>
-            <div class="search-container">
-            <form id="auditForm" class="search-form">
-                <input type="text" id="targetUrl" placeholder="Enter website URL (e.g., example.com)" required autocomplete="off">
-                <button type="submit" id="submitBtn">
-                    <span class="btn-text">Initialize Scan</span>
+            <div class="mode-tabs" style="display: flex; gap: 15px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
+                <button id="dastModeBtn" class="tab-btn active" style="font-weight: 600;">🌍 Web Scanner (DAST)</button>
+                <button id="sastModeBtn" class="tab-btn" style="font-weight: 600;">💻 Code Auditor (SAST)</button>
+            </div>
+
+            <div id="dastModeContainer">
+                <p class="search-desc">Enter any website URL or domain name below. Akhil WebGuard will inspect its publicly available HTTP response headers and SSL/TLS certificate configurations.</p>
+                <div class="search-container">
+                <form id="auditForm" class="search-form">
+                    <input type="text" id="targetUrl" placeholder="Enter website URL (e.g., example.com)" required autocomplete="off">
+                    <button type="submit" id="submitBtn">
+                        <span class="btn-text">Initialize Scan</span>
+                        <span class="loader hidden"></span>
+                    </button>
+                </form>
+                </div>
+                
+                <div class="advanced-toggle" style="margin-top: 15px;">
+                    <button id="toggleHeadersBtn" style="background: none; border: none; color: var(--primary); cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                        <span id="headerToggleIcon">▶</span> Advanced Options (Auth / Headers)
+                    </button>
+                    <div id="customHeadersContainer" class="hidden" style="margin-top: 10px;">
+                        <textarea id="customHeadersInput" placeholder="Cookie: session=123&#10;Authorization: Bearer xyz" rows="3" style="width: 100%; max-width: 600px; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-family: monospace;"></textarea>
+                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 5px;">Paste raw HTTP headers. These will be injected into every scanner request.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="sastModeContainer" class="hidden">
+                <p class="search-desc">Paste your raw backend source code (Node.js, Python, PHP, etc.) to perform Static Application Security Testing (SAST) for hardcoded secrets, SQLi, and weak cryptography.</p>
+                <textarea id="sastCodeInput" placeholder="function login(user, pass) {&#10;  db.query('SELECT * FROM users WHERE user = ' + user);&#10;}" rows="10" style="width: 100%; padding: 15px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: #10b981; font-family: monospace; margin-bottom: 15px;"></textarea>
+                <button id="sastSubmitBtn" class="btn primary" style="width: 100%;">
+                    <span class="btn-text">Audit Code with AI</span>
                     <span class="loader hidden"></span>
                 </button>
-            </form>
+                <div id="sastResults" class="hidden card" style="margin-top: 20px; white-space: pre-wrap; font-family: monospace; line-height: 1.6;"></div>
+            </div>
+
             <div id="errorMessage" class="error-message hidden"></div>
-        </div></section>
+        </section>
 
         <!-- Loading Skeleton -->
         <section id="loadingSkeleton" class="skeleton-section hidden">
@@ -297,6 +326,16 @@
                 </div>
             </div>
 
+            <!-- Compliance & Reporting Mapping -->
+            <div class="details-section" style="margin-top: 30px;">
+                <h3 style="color: var(--primary); border-bottom: 2px solid rgba(59, 130, 246, 0.2); padding-bottom: 10px;">📋 Compliance Mapping (OWASP & PCI-DSS)</h3>
+                <div class="card" style="margin-top: 15px;">
+                    <ul class="advanced-list" id="complianceList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+            </div>
+
             <!-- AI Intelligence Insights Section -->
             <div id="aiInsightsContainer" class="hidden" style="margin-top: 30px;">
                 <div class="card ai-card" style="border: 2px solid var(--primary); background: rgba(59, 130, 246, 0.05);">
@@ -386,6 +425,17 @@
 
     <!-- Floating Chat Open Button -->
     <button id="openChatBtn" class="hidden btn primary" style="position: fixed; bottom: 20px; right: 20px; border-radius: 50%; width: 60px; height: 60px; font-size: 24px; box-shadow: 0 5px 15px rgba(59,130,246,0.5); z-index: 999;">💬</button>
+
+    <!-- PoC Modal -->
+    <div id="pocModal" class="hidden" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.8); z-index: 2000; display: flex; justify-content: center; align-items: center;">
+        <div class="card" style="width: 90%; max-width: 800px; max-height: 90vh; display: flex; flex-direction: column;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 15px;">
+                <h3 style="color: #ef4444;">🐍 Generated Exploit PoC (Python)</h3>
+                <button id="closePocBtn" style="background: none; border: none; color: white; cursor: pointer; font-size: 20px;">✖</button>
+            </div>
+            <div id="pocModalContent" style="flex: 1; overflow-y: auto; white-space: pre-wrap; font-family: monospace; background: #0f172a; padding: 15px; border-radius: 6px; color: #10b981;">Loading exploit generation from AI...</div>
+        </div>
+    </div>
 
     <script src="app.js"></script>
 </body>

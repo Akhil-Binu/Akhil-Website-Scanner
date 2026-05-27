@@ -77,22 +77,59 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    const dastModeBtn = document.getElementById('dastModeBtn');
+    const sastModeBtn = document.getElementById('sastModeBtn');
+    const dastModeContainer = document.getElementById('dastModeContainer');
+    const sastModeContainer = document.getElementById('sastModeContainer');
+    const toggleHeadersBtn = document.getElementById('toggleHeadersBtn');
+    const customHeadersContainer = document.getElementById('customHeadersContainer');
+    const customHeadersInput = document.getElementById('customHeadersInput');
+    const sastSubmitBtn = document.getElementById('sastSubmitBtn');
+    const sastCodeInput = document.getElementById('sastCodeInput');
+    const sastResults = document.getElementById('sastResults');
+
+    // UI Toggles
+    if(dastModeBtn) dastModeBtn.addEventListener('click', () => { dastModeBtn.classList.add('active'); sastModeBtn.classList.remove('active'); dastModeContainer.classList.remove('hidden'); sastModeContainer.classList.add('hidden'); });
+    if(sastModeBtn) sastModeBtn.addEventListener('click', () => { sastModeBtn.classList.add('active'); dastModeBtn.classList.remove('active'); sastModeContainer.classList.remove('hidden'); dastModeContainer.classList.add('hidden'); });
+    if(toggleHeadersBtn) toggleHeadersBtn.addEventListener('click', () => { customHeadersContainer.classList.toggle('hidden'); document.getElementById('headerToggleIcon').textContent = customHeadersContainer.classList.contains('hidden') ? '▶' : '▼'; });
+
+    // SAST Submit Logic
+    if(sastSubmitBtn) sastSubmitBtn.addEventListener('click', async () => {
+        const code = sastCodeInput.value.trim();
+        if(!code) return;
+        sastSubmitBtn.querySelector('.btn-text').classList.add('hidden');
+        sastSubmitBtn.querySelector('.loader').classList.remove('hidden');
+        sastSubmitBtn.disabled = true;
+        sastResults.classList.add('hidden');
+        try {
+            const res = await fetch('/api/sast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+            const data = await res.json();
+            sastResults.textContent = data.report || data.error;
+            sastResults.classList.remove('hidden');
+        } catch (e) {
+            sastResults.textContent = "Error communicating with AI engine.";
+            sastResults.classList.remove('hidden');
+        }
+        sastSubmitBtn.querySelector('.btn-text').classList.remove('hidden');
+        sastSubmitBtn.querySelector('.loader').classList.add('hidden');
+        sastSubmitBtn.disabled = false;
+    });
+
     // Form Submit Handler
     auditForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         
         let url = targetUrlInput.value.trim();
+        let headers = customHeadersInput ? customHeadersInput.value.trim() : '';
         if (!url) return;
 
         // Reset visibility states
         errorMessage.classList.add('hidden');
         resultsSection.classList.add('hidden');
         loadingSkeleton.classList.remove('hidden');
-        
-        // Show loader state
+        submitBtn.querySelector('.btn-text').classList.add('hidden');
+        submitBtn.querySelector('.loader').classList.remove('hidden');
         submitBtn.disabled = true;
-        btnText.classList.add('hidden');
-        loader.classList.remove('hidden');
 
         try {
             const response = await fetch('/api/analyze', {
@@ -100,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ url })
+                body: JSON.stringify({ url, headers })
             });
 
             const data = await response.json();
@@ -160,7 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             document.getElementById('sslSans').textContent = (data.tlsDetails.sans && data.tlsDetails.sans.length > 0) ? data.tlsDetails.sans.join(', ') : 'None Detected';
-            document.getElementById('sslOcsp').textContent = (data.tlsDetails.ocsp && data.tlsDetails.ocsp.length > 0) ? data.tlsDetails.ocsp.join(', ') : 'None Detected';
+            document.getElementById('sslOcsp').textContent = (data.tlsDetails.tlsDetails && data.tlsDetails.ocsp && data.tlsDetails.ocsp.length > 0) ? data.tlsDetails.ocsp.join(', ') : 'None Detected';
             
         } else {
             sslBadge.textContent = 'No SSL Connection';
@@ -218,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Render Advanced Audits (DNS, Cookies, SRI, CSP)
         if (data.advanced) {
-            renderAdvancedAudits(data.advanced);
+            renderAdvancedAudits(data.advanced, data);
         }
 
         // Render AI Insights
@@ -245,7 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
         resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function renderAdvancedAudits(advanced) {
+    function renderAdvancedAudits(advanced, data) {
         // 1. Render DNS Security
         const dnsGrid = document.getElementById('dnsGrid');
         dnsGrid.innerHTML = '';
@@ -697,6 +734,103 @@ document.addEventListener('DOMContentLoaded', () => {
             aiDefenseList.innerHTML = '';
             const statusClass = advanced.aiScrapers.blocksAi ? 'configured' : 'missing';
             const statusText = advanced.aiScrapers.blocksAi ? 'Protected' : 'Vulnerable';
+            
+            // 13. Active DAST Engine & PoC Gen
+            const sqliList = document.getElementById('sqliList');
+            const xssList = document.getElementById('xssList');
+            const lfiList = document.getElementById('lfiList');
+            const ssrfList = document.getElementById('ssrfList');
+            const authList = document.getElementById('authList');
+
+            window.generatePoc = async (vulnContext) => {
+                const modal = document.getElementById('pocModal');
+                const content = document.getElementById('pocModalContent');
+                modal.classList.remove('hidden');
+                content.textContent = "Loading exploit generation from AI...";
+                try {
+                    const res = await fetch('/api/generate-poc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vulnContext }) });
+                    const data = await res.json();
+                    content.textContent = data.poc || data.error;
+                } catch(e) { content.textContent = "Error generating PoC."; }
+            };
+
+            if (advanced.dast) {
+                const populateDastCard = (listElem, dataArr, vulnName) => {
+                    if (!listElem) return;
+                    listElem.innerHTML = '';
+                    if (!dataArr || dataArr.length === 0) {
+                        listElem.innerHTML = `<li class="advanced-item">No ${vulnName} vulnerabilities detected.</li>`;
+                    } else {
+                        dataArr.forEach(hit => {
+                            const context = `${vulnName} on parameter ?${hit.param}= with payload: ${hit.payload}`;
+                            listElem.innerHTML += `
+                                <li class="advanced-item" style="display:flex; justify-content:space-between; align-items:center;">
+                                    <div>
+                                        <div class="advanced-item-title">
+                                            <span style="color: #ef4444; font-weight: bold;">Exploitable Param: ?${escapeHTML(hit.param)}=</span>
+                                            <span class="status-indicator missing">VULNERABLE</span>
+                                        </div>
+                                        <div class="advanced-item-desc">Payload: <code>${escapeHTML(hit.payload)}</code></div>
+                                    </div>
+                                    <button onclick="window.generatePoc('${escapeHTML(context)}')" class="btn primary" style="padding: 5px 10px; font-size: 0.8rem; background: #ef4444; border-color: #ef4444;">Generate PoC</button>
+                                </li>`;
+                        });
+                    }
+                };
+
+                populateDastCard(sqliList, advanced.dast.sqli, 'SQLi');
+                populateDastCard(xssList, advanced.dast.xss, 'Reflected XSS');
+                populateDastCard(lfiList, advanced.dast.lfi, 'Directory Traversal');
+                populateDastCard(ssrfList, advanced.dast.ssrf, 'SSRF');
+            } else {
+                const noParamsMsg = `<li class="advanced-item">No URL parameters found to fuzz. Test URLs like ?id=1 to activate DAST engine.</li>`;
+                if (sqliList) sqliList.innerHTML = noParamsMsg;
+                if (xssList) xssList.innerHTML = noParamsMsg;
+                if (lfiList) lfiList.innerHTML = noParamsMsg;
+                if (ssrfList) ssrfList.innerHTML = noParamsMsg;
+            }
+
+            if (authList && advanced.auth) {
+                authList.innerHTML = '';
+                const addAuthItem = (title, count, severity, safeMsg, vulnMsg) => {
+                    const isVuln = count > 0;
+                    const badgeClass = isVuln ? 'missing' : 'configured';
+                    authList.innerHTML += `
+                        <li class="advanced-item">
+                            <div class="advanced-item-title">
+                                <span>${title}</span>
+                                <span class="status-indicator ${badgeClass}">${isVuln ? severity : 'Secure'}</span>
+                            </div>
+                            <div class="advanced-item-desc">${isVuln ? `${count} ${vulnMsg}` : safeMsg}</div>
+                        </li>`;
+                };
+                addAuthItem('Missing CSRF Tokens', advanced.auth.missingCsrf, 'HIGH RISK', 'All POST forms appear protected or no forms detected.', 'POST form(s) missing anti-CSRF tokens.');
+                addAuthItem('Plaintext Password Transmission', advanced.auth.plaintextPasswords, 'CRITICAL', 'No passwords transmitted via GET requests.', 'password input(s) transmitting data insecurely via URL (GET).');
+                addAuthItem('Insecure Form Actions', advanced.auth.insecureAction, 'HIGH RISK', 'All form actions use HTTPS.', 'form(s) submitting data to unencrypted HTTP endpoints.');
+            }
+
+            // 14. Compliance Mapping
+            const complianceList = document.getElementById('complianceList');
+            if (complianceList) {
+                complianceList.innerHTML = '';
+                const missingHeaders = data.headers.filter(h => h.status === 'Missing');
+                if (missingHeaders.length > 0) {
+                    complianceList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span>OWASP Top 10: A05:2021-Security Misconfiguration</span><span class="status-indicator missing">FAIL</span></div><div class="advanced-item-desc">Missing ${missingHeaders.length} security headers violates standard hardening guidelines.</div></li>`;
+                } else {
+                    complianceList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span>OWASP Top 10: A05:2021-Security Misconfiguration</span><span class="status-indicator configured">PASS</span></div><div class="advanced-item-desc">Basic HTTP Header configuration complies with standard guidelines.</div></li>`;
+                }
+
+                if (data.tlsDetails && data.tlsDetails.success === false) {
+                     complianceList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span>PCI-DSS Requirement 4.1</span><span class="status-indicator missing">FAIL</span></div><div class="advanced-item-desc">Use strong cryptography and security protocols to safeguard sensitive cardholder data during transmission over open, public networks.</div></li>`;
+                } else {
+                     complianceList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span>PCI-DSS Requirement 4.1</span><span class="status-indicator configured">PASS</span></div><div class="advanced-item-desc">Valid TLS connection established protecting data in transit.</div></li>`;
+                }
+
+                if (advanced.dast && (advanced.dast.sqli.length > 0 || advanced.dast.xss.length > 0)) {
+                     complianceList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span>OWASP Top 10: A03:2021-Injection</span><span class="status-indicator missing">CRITICAL FAIL</span></div><div class="advanced-item-desc">Active injection vulnerabilities detected (SQLi/XSS). Code is highly vulnerable to data exfiltration.</div></li>`;
+                }
+            }
+
             aiDefenseList.innerHTML += `
                 <li class="advanced-item">
                     <div class="advanced-item-title">
@@ -734,7 +868,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Generate Config Block based on platform
         let nginxConfig = '# Nginx Web Server Configuration\n# Put these directives inside your server {} blocks:\n\n';
         let apacheConfig = '# Apache HTTP Server Configuration\n# Add these directives to your .htaccess or httpd.conf:\n\n<IfModule mod_headers.c>\n';
         let expressConfig = '// Node.js Express Server Setup\n// Install helmet: npm install helmet\n// Then use these middleware configurations:\n\nconst express = require(\'express\');\nconst helmet = require(\'helmet\');\nconst app = express();\n\n';
@@ -766,23 +899,20 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/'/g, '&#039;');
     }
 
-    // Chat Widget Logic
-    const openChatBtn = document.getElementById('openChatBtn');
-    const closeChatBtn = document.getElementById('closeChatBtn');
-    const chatWidget = document.getElementById('chatWidget');
+    // Chat & PoC Modal Event Listeners
+    if (document.getElementById('openChatBtn')) {
+        document.getElementById('openChatBtn').addEventListener('click', () => { document.getElementById('chatWidget').classList.remove('hidden'); document.getElementById('openChatBtn').classList.add('hidden'); });
+        document.getElementById('closeChatBtn').addEventListener('click', () => { document.getElementById('chatWidget').classList.add('hidden'); document.getElementById('openChatBtn').classList.remove('hidden'); });
+    }
+    
+    if (document.getElementById('closePocBtn')) {
+        document.getElementById('closePocBtn').addEventListener('click', () => { document.getElementById('pocModal').classList.add('hidden'); });
+    }
+
     const sendChatBtn = document.getElementById('sendChatBtn');
     const chatInput = document.getElementById('chatInput');
     const chatMessages = document.getElementById('chatMessages');
 
-    if (openChatBtn && closeChatBtn && chatWidget) {
-        openChatBtn.addEventListener('click', () => {
-            chatWidget.classList.remove('hidden');
-            openChatBtn.classList.add('hidden');
-        });
-        closeChatBtn.addEventListener('click', () => {
-            chatWidget.classList.add('hidden');
-            openChatBtn.classList.remove('hidden');
-        });
 
         const appendMsg = (txt, isUser) => {
             const div = document.createElement('div');
@@ -824,7 +954,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         sendChatBtn.addEventListener('click', sendMsg);
         chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMsg(); });
-    }
 });
 
 // Clipboard Helper

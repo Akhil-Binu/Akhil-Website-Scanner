@@ -179,11 +179,11 @@ async function checkDnsSecurity(hostname) {
   return results;
 }
 
-async function checkInfrastructure(baseUrl) {
+async function checkInfrastructure(baseUrl, customHeaders) {
     const infra = { robots: false, sitemap: false, crossdomain: false };
     const ping = async (path) => {
         try {
-            const res = await axios.get(baseUrl + path, { timeout: 2500, validateStatus: () => true });
+            const res = await axios.get(baseUrl + path, { headers: customHeaders, timeout: 2500, validateStatus: () => true });
             return res.status === 200;
         } catch(e) { return false; }
     };
@@ -240,9 +240,9 @@ function analyzeCacheSecurity(headers) {
     };
 }
 
-async function checkHttpMethods(targetUrl) {
+async function checkHttpMethods(baseUrl, customHeaders) {
     try {
-        const res = await axios.options(targetUrl, { timeout: 3000, validateStatus: () => true });
+        const res = await axios.options(baseUrl, { headers: customHeaders, timeout: 3000, validateStatus: () => true });
         const allowed = res.headers['access-control-allow-methods'] || res.headers['allow'] || '';
         if (!allowed) return { methods: 'Not defined', vulnerable: false };
         const vulnMethods = ['TRACE', 'PUT', 'DELETE', 'TRACK'];
@@ -251,18 +251,18 @@ async function checkHttpMethods(targetUrl) {
     } catch (e) { return { methods: 'Failed', vulnerable: false }; }
 }
 
-async function checkDirectoryListing(baseUrl) {
+async function checkDirectoryListing(baseUrl, customHeaders) {
     try {
-        const res = await axios.get(`${baseUrl}/assets/`, { timeout: 3000, validateStatus: () => true });
+        const res = await axios.get(baseUrl + '/assets/', { headers: customHeaders, timeout: 3000, validateStatus: () => true });
         const dataStr = String(res.data);
         if (res.status === 200 && (dataStr.includes('<title>Index of') || dataStr.includes('Index of /assets'))) return true;
     } catch (e) {}
     return false;
 }
 
-async function checkCors(baseUrl) {
+async function checkCors(baseUrl, customHeaders) {
     try {
-        const res = await axios.options(baseUrl, { headers: { 'Origin': 'https://evil-origin.com' }, timeout: 3000, validateStatus: () => true });
+        const res = await axios.get(baseUrl, { headers: { ...customHeaders, 'Origin': 'https://evil-origin.com' }, timeout: 3000, validateStatus: () => true });
         const acao = res.headers['access-control-allow-origin'];
         if (acao === '*' || acao === 'https://evil-origin.com') return { vulnerable: true, message: `Reflected/Wildcard CORS: ${acao}` };
     } catch(e) {}
@@ -276,9 +276,9 @@ function checkInfoLeakage(headers) {
     return leaks;
 }
 
-async function checkSecurityTxt(baseUrl) {
+async function checkSecurityTxt(baseUrl, customHeaders) {
     try {
-        const res = await axios.get(`${baseUrl}/.well-known/security.txt`, { timeout: 2000, validateStatus: () => true });
+        const res = await axios.get(baseUrl + '/.well-known/security.txt', { headers: customHeaders, timeout: 3000, validateStatus: () => true });
         if (res.status === 200 && String(res.data).toLowerCase().includes('contact')) return { found: true };
     } catch(e) {}
     return { found: false };
@@ -332,7 +332,7 @@ async function checkBrokenLinks(html, hostname) {
 }
 
 // New Module: Directory Fuzzer & Sensitive Files
-async function checkDirectoryFuzzing(baseUrl) {
+async function checkDirectoryFuzzing(baseUrl, customHeaders) {
     const paths = [
         '/.env', '/.git/config', '/.DS_Store', '/docker-compose.yml', '/config.json',
         '/admin', '/wp-admin', '/backup', '/backup.zip', '/old', '/test', '/staging',
@@ -341,7 +341,7 @@ async function checkDirectoryFuzzing(baseUrl) {
     const results = { exposedFiles: [], hiddenDirs: [], apis: [] };
     const ping = async (path) => {
         try {
-            const res = await axios.head(baseUrl + path, { timeout: 2000, validateStatus: () => true });
+            const res = await axios.head(baseUrl + path, { headers: customHeaders, timeout: 2000, validateStatus: () => true });
             if (res.status === 200 || res.status === 401 || res.status === 403) return { path, status: res.status };
         } catch(e) {}
         return null;
@@ -356,9 +356,9 @@ async function checkDirectoryFuzzing(baseUrl) {
 }
 
 // New Module: AI Scraper Defenses
-async function checkAiScrapers(baseUrl) {
+async function checkAiScrapers(baseUrl, customHeaders) {
     try {
-        const res = await axios.get(`${baseUrl}/robots.txt`, { timeout: 2500, validateStatus: () => true });
+        const res = await axios.get(`${baseUrl}/robots.txt`, { headers: customHeaders, timeout: 2500, validateStatus: () => true });
         if (res.status === 200) {
             const txt = String(res.data).toLowerCase();
             const blocksAi = txt.includes('gptbot') || txt.includes('anthropic-ai') || txt.includes('ccbot') || txt.includes('google-extended');
@@ -369,7 +369,7 @@ async function checkAiScrapers(baseUrl) {
 }
 
 // New Module: Active DAST Injection (SQLi, XSS, SSRF, LFI)
-async function checkActiveVulnerabilities(targetUrlObj) {
+async function checkActiveVulnerabilities(targetUrlObj, customHeaders) {
     const results = { sqli: [], xss: [], ssrf: [], lfi: [] };
     if (!targetUrlObj.search) return results; // Only scan if parameters exist
     
@@ -380,7 +380,7 @@ async function checkActiveVulnerabilities(targetUrlObj) {
         try {
             const testUrl = new urlModule.URL(targetUrlObj.href);
             testUrl.searchParams.set(param, payload);
-            const res = await axios.get(testUrl.toString(), { timeout: 3000, validateStatus: () => true });
+            const res = await axios.get(testUrl.toString(), { headers: customHeaders, timeout: 3000, validateStatus: () => true });
             if (checkFn(String(res.data), res.status, res.headers)) {
                 results[type].push({ param, payload, url: testUrl.toString() });
             }
@@ -541,27 +541,33 @@ function parseHtmlSecurity(html, targetHostname, protocol) {
 }
 
 app.post('/api/analyze', async (req, res) => {
-  let targetUrl = req.body.url;
-  if (!targetUrl) return res.status(400).json({ error: 'URL required' });
-  if (!/^https?:\/\//i.test(targetUrl)) targetUrl = 'https://' + targetUrl;
-
-  let parsedUrl;
-  try { parsedUrl = new urlModule.URL(targetUrl); } catch (err) { return res.status(400).json({ error: 'Invalid URL' }); }
-
-  const hostname = parsedUrl.hostname;
-  const protocol = parsedUrl.protocol;
-  const baseUrl = `${protocol}//${hostname}`;
-
   try {
+    const { url, headers: customReqHeaders } = req.body;
+    let target = url.trim();
+    if (!target.startsWith('http')) target = 'https://' + target;
+
+    const parsedUrl = new urlModule.URL(target);
+    const hostname = parsedUrl.hostname;
+    const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+    const isHttps = parsedUrl.protocol === 'https:';
+    
+    // Parse custom auth headers provided by the user
+    let customHeaders = { 'User-Agent': 'Mozilla/5.0 AkhilWebGuardAuditor/6.0 Enterprise' };
+    if (customReqHeaders) {
+        customReqHeaders.split('\n').forEach(line => {
+            const [key, ...val] = line.split(':');
+            if (key && val) customHeaders[key.trim()] = val.join(':').trim();
+        });
+    }
+
     const response = await axios.get(parsedUrl.toString(), {
-      headers: { 'User-Agent': 'Mozilla/5.0 AkhilWebGuardAuditor/5.0 Ultimate', 'Origin': 'https://evil-origin.com' },
+      headers: customHeaders,
       timeout: 15000, maxRedirects: 5, validateStatus: () => true
     });
 
     const headers = response.headers;
     const auditResults = [];
     let currentScore = 10; 
-    const isHttps = protocol === 'https:';
     if (isHttps) currentScore += 15;
 
     for (const [headerKey, config] of Object.entries(SECURITY_HEADERS)) {
@@ -579,25 +585,25 @@ app.post('/api/analyze', async (req, res) => {
     const [
       infra, hstsPreloaded, subdomains, dnsSecurity, httpMethods, dirListing, cors, securityTxt, openPorts, brokenLinks, fuzzer, aiScrapers, dast
     ] = await Promise.all([
-      checkInfrastructure(baseUrl),
+      checkInfrastructure(baseUrl, customHeaders),
       isHttps ? checkHstsPreload(hostname) : false,
       getSubdomains(hostname),
       checkDnsSecurity(hostname),
-      checkHttpMethods(baseUrl),
-      checkDirectoryListing(baseUrl),
-      checkCors(baseUrl),
-      checkSecurityTxt(baseUrl),
+      checkHttpMethods(baseUrl, customHeaders),
+      checkDirectoryListing(baseUrl, customHeaders),
+      checkCors(baseUrl, customHeaders),
+      checkSecurityTxt(baseUrl, customHeaders),
       checkPorts(hostname),
       checkBrokenLinks(String(response.data), hostname),
-      checkDirectoryFuzzing(baseUrl),
-      checkAiScrapers(baseUrl),
-      checkActiveVulnerabilities(parsedUrl)
+      checkDirectoryFuzzing(baseUrl, customHeaders),
+      checkAiScrapers(baseUrl, customHeaders),
+      checkActiveVulnerabilities(parsedUrl, customHeaders)
     ]);
 
     const cookieAnalysis = analyzeCookies(headers['set-cookie']);
     const cspEval = evaluateDeepCSP(headers['content-security-policy']);
     const cacheSecurity = analyzeCacheSecurity(headers);
-    const htmlSecurity = parseHtmlSecurity(String(response.data), hostname, protocol);
+    const htmlSecurity = parseHtmlSecurity(String(response.data), hostname, parsedUrl.protocol);
     const techStack = identifyTech(headers, String(response.data));
     const leaks = checkInfoLeakage(headers);
     const waf = checkWaf(headers);
@@ -646,7 +652,7 @@ app.post('/api/analyze', async (req, res) => {
       isHttps, headers: auditResults, tlsDetails, aiInsights,
       advanced: {
         cookies: cookieAnalysis, cspIssues: cspEval.issues, hasFrameAncestors: cspEval.hasFrameAncestors,
-        dnsSecurity, infra, hstsPreloaded, subdomains, cacheSecurity, httpMethods, dirListing,
+        dnsSecurity, infra: { server: response.headers['server'] || 'Unknown', poweredBy: response.headers['x-powered-by'] || 'Hidden' }, hstsPreloaded: false, subdomains, cacheSecurity, httpMethods, dirListing,
         domSec: htmlSecurity.domSec, sourceMaps: htmlSecurity.sourceMaps, sriAnalysis: htmlSecurity.sriAnalysis,
         mixedContent: htmlSecurity.mixedContent, libraries: htmlSecurity.libraries, seo: htmlSecurity.seo,
         auth: htmlSecurity.auth,
@@ -666,6 +672,28 @@ User Question: ${message}
 Reply concisely and practically in 2-3 sentences. Do not use markdown backticks for formatting, just plain text.`;
     const reply = await callGemini(GEMINI_API_KEY, prompt);
     res.json({ reply });
+});
+
+// SAST Endpoint
+app.post('/api/sast', async (req, res) => {
+    const { code } = req.body;
+    if (!GEMINI_API_KEY || !code) return res.status(400).json({ error: 'Missing key or code' });
+    const prompt = `You are an expert SAST (Static Application Security Testing) auditor. Analyze the following source code for security vulnerabilities (e.g. hardcoded secrets, SQLi, weak crypto, missing auth checks). 
+Code:\n${code.substring(0, 8000)}\n
+Reply with a concise, formatted markdown report outlining the vulnerabilities and how to fix them.`;
+    const reply = await callGemini(GEMINI_API_KEY, prompt);
+    res.json({ report: reply });
+});
+
+// PoC Exploit Generator
+app.post('/api/generate-poc', async (req, res) => {
+    const { vulnContext } = req.body;
+    if (!GEMINI_API_KEY || !vulnContext) return res.status(400).json({ error: 'Missing key or context' });
+    const prompt = `You are a red team security engineer. I have discovered the following vulnerability on a target using a DAST scanner:
+${vulnContext}
+Write a short, educational Python Proof-of-Concept (PoC) script using the 'requests' library that demonstrates how this exploit works. Do not explain the code too much, just return the raw python code in a markdown block.`;
+    const reply = await callGemini(GEMINI_API_KEY, prompt);
+    res.json({ poc: reply });
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

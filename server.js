@@ -142,7 +142,6 @@ function getTlsDetails(hostname) {
   });
 }
 
-// 1. Cookie Security Analyzer
 function analyzeCookies(setCookieHeaders) {
   const cookies = [];
   if (!setCookieHeaders) return cookies;
@@ -158,17 +157,11 @@ function analyzeCookies(setCookieHeaders) {
     const samesiteMatch = cookieStr.match(/samesite=(strict|lax|none)/i);
     const sameSite = samesiteMatch ? samesiteMatch[1] : 'Missing';
     
-    cookies.push({
-      name: name,
-      secure: isSecure,
-      httpOnly: isHttpOnly,
-      sameSite: sameSite
-    });
+    cookies.push({ name, secure: isSecure, httpOnly: isHttpOnly, sameSite });
   });
   return cookies;
 }
 
-// 2. Deep CSP Evaluator
 function evaluateDeepCSP(cspHeader) {
   const issues = [];
   if (!cspHeader) return issues;
@@ -184,7 +177,6 @@ function evaluateDeepCSP(cspHeader) {
     issues.push({ severity: 'Medium', issue: 'Allows loading resources over insecure HTTP' });
   }
   
-  // Basic check for wildcard in important directives
   const directives = cspLower.split(';').map(d => d.trim());
   directives.forEach(dir => {
     if ((dir.startsWith('default-src') || dir.startsWith('script-src') || dir.startsWith('object-src')) && dir.includes('*')) {
@@ -195,13 +187,8 @@ function evaluateDeepCSP(cspHeader) {
   return issues;
 }
 
-// 3. DNS Security Checks (SPF & DMARC)
 async function checkDnsSecurity(hostname) {
-  const results = {
-    spf: { found: false, record: null },
-    dmarc: { found: false, record: null }
-  };
-  
+  const results = { spf: { found: false, record: null }, dmarc: { found: false, record: null } };
   try {
     const txtRecords = await dns.resolveTxt(hostname);
     for (const recordArray of txtRecords) {
@@ -211,7 +198,7 @@ async function checkDnsSecurity(hostname) {
         results.spf.record = recordStr;
       }
     }
-  } catch (e) { /* Ignore DNS errors */ }
+  } catch (e) { }
   
   try {
     const dmarcRecords = await dns.resolveTxt('_dmarc.' + hostname);
@@ -222,12 +209,11 @@ async function checkDnsSecurity(hostname) {
         results.dmarc.record = recordStr;
       }
     }
-  } catch (e) { /* Ignore DNS errors */ }
+  } catch (e) { }
   
   return results;
 }
 
-// 4. Security.txt Discovery
 async function checkSecurityTxt(targetProtocol, hostname) {
   try {
     const res = await axios.get(`${targetProtocol}//${hostname}/.well-known/security.txt`, {
@@ -237,43 +223,100 @@ async function checkSecurityTxt(targetProtocol, hostname) {
     if (res.status === 200 && (res.data.includes('Contact:') || res.data.includes('contact:'))) {
       return { found: true };
     }
-  } catch (e) { /* Ignore errors */ }
+  } catch (e) { }
   return { found: false };
 }
 
-// 5. Subresource Integrity (SRI) Check
-function checkSRI(html, targetHostname) {
+// Check Information Leakage
+function checkInfoLeakage(headers) {
+  const leaks = [];
+  if (headers['x-powered-by']) leaks.push(`X-Powered-By reveals backend stack: ${headers['x-powered-by']}`);
+  if (headers['server']) leaks.push(`Server header reveals software version: ${headers['server']}`);
+  if (headers['x-aspnet-version']) leaks.push(`X-AspNet-Version reveals .NET version: ${headers['x-aspnet-version']}`);
+  return leaks;
+}
+
+// Check CORS
+function checkCors(headers, evilOrigin) {
+  const corsHeader = headers['access-control-allow-origin'];
+  if (!corsHeader) return { vulnerable: false, message: 'No CORS headers detected (Safe default)' };
+  
+  if (corsHeader === evilOrigin) {
+    return { vulnerable: true, message: `Server reflected the malicious origin ${evilOrigin}` };
+  }
+  if (corsHeader === '*') {
+    return { vulnerable: true, message: `Server allows any origin (*). Ensure 'Access-Control-Allow-Credentials' is not true.` };
+  }
+  return { vulnerable: false, message: `CORS header restricted to: ${corsHeader}` };
+}
+
+// Parse HTML for SRI, Mixed Content, and Libraries
+function parseHtmlSecurity(html, targetHostname, protocol) {
   const results = {
-    totalExternalScripts: 0,
-    scriptsMissingSRI: 0,
-    totalExternalStyles: 0,
-    stylesMissingSRI: 0
+    sri: { totalExternalScripts: 0, scriptsMissingSRI: 0, totalExternalStyles: 0, stylesMissingSRI: 0 },
+    mixedContent: [],
+    libraries: []
   };
   
   if (!html) return results;
   
   const $ = cheerio.load(html);
   
+  // Mixed Content checker helper
+  const checkMixed = (url, tag) => {
+    if (protocol === 'https:' && url && url.startsWith('http://')) {
+      results.mixedContent.push(`Insecure ${tag} loaded over HTTP: ${url}`);
+    }
+  };
+
+  $('img[src]').each((i, el) => checkMixed($(el).attr('src'), 'image'));
+  $('iframe[src]').each((i, el) => checkMixed($(el).attr('src'), 'iframe'));
+  
   $('script[src]').each((i, el) => {
     const src = $(el).attr('src');
-    if (src && (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('//'))) {
-      // Check if it's truly external (not a subpath or matching hostname)
+    if (!src) return;
+    
+    checkMixed(src, 'script');
+    
+    // SRI Check
+    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('//')) {
       if (!src.includes(targetHostname)) {
-        results.totalExternalScripts++;
+        results.sri.totalExternalScripts++;
         if (!$(el).attr('integrity')) {
-          results.scriptsMissingSRI++;
+          results.sri.scriptsMissingSRI++;
         }
       }
     }
+    
+    // Library extraction heuristic
+    const filename = src.split('/').pop().toLowerCase();
+    const libPatterns = [
+      { name: 'jQuery', regex: /jquery[-.]([0-9.]+)/ },
+      { name: 'React', regex: /react(?:-dom)?[-.@]([0-9.]+)/ },
+      { name: 'Vue', regex: /vue[-.@]([0-9.]+)/ },
+      { name: 'Bootstrap', regex: /bootstrap[-.@]([0-9.]+)/ },
+      { name: 'Angular', regex: /angular[-.@]([0-9.]+)/ }
+    ];
+    
+    libPatterns.forEach(pattern => {
+      const match = filename.match(pattern.regex);
+      if (match) {
+        results.libraries.push({ name: pattern.name, version: match[1], file: filename });
+      }
+    });
   });
   
   $('link[rel="stylesheet"][href]').each((i, el) => {
     const href = $(el).attr('href');
-    if (href && (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('//'))) {
+    if (!href) return;
+    checkMixed(href, 'stylesheet');
+    
+    // SRI Check
+    if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('//')) {
       if (!href.includes(targetHostname)) {
-        results.totalExternalStyles++;
+        results.sri.totalExternalStyles++;
         if (!$(el).attr('integrity')) {
-          results.stylesMissingSRI++;
+          results.sri.stylesMissingSRI++;
         }
       }
     }
@@ -284,13 +327,8 @@ function checkSRI(html, targetHostname) {
 
 app.post('/api/analyze', async (req, res) => {
   let targetUrl = req.body.url;
-  if (!targetUrl) {
-    return res.status(400).json({ error: 'URL parameter is required.' });
-  }
-
-  if (!/^https?:\/\//i.test(targetUrl)) {
-    targetUrl = 'https://' + targetUrl;
-  }
+  if (!targetUrl) return res.status(400).json({ error: 'URL parameter is required.' });
+  if (!/^https?:\/\//i.test(targetUrl)) targetUrl = 'https://' + targetUrl;
 
   let parsedUrl;
   try {
@@ -301,11 +339,13 @@ app.post('/api/analyze', async (req, res) => {
 
   const hostname = parsedUrl.hostname;
   const protocol = parsedUrl.protocol;
+  const evilOrigin = 'https://evil-domain-test.com';
 
   try {
     const response = await axios.get(parsedUrl.toString(), {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WebGuardAuditor/2.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WebGuardAuditor/3.0',
+        'Origin': evilOrigin // Test CORS reflection
       },
       timeout: 8000,
       maxRedirects: 5,
@@ -322,23 +362,13 @@ app.post('/api/analyze', async (req, res) => {
     for (const [headerKey, config] of Object.entries(SECURITY_HEADERS)) {
       const headerVal = headers[headerKey];
       const present = !!headerVal;
-
-      if (present) {
-        currentScore += config.score;
-      }
+      if (present) currentScore += config.score;
 
       auditResults.push({
-        key: headerKey,
-        name: config.name,
-        description: config.description,
-        status: present ? 'Configured' : 'Missing',
-        value: headerVal || null,
-        scorePoints: present ? config.score : 0,
-        maxPoints: config.score,
-        nginx: config.nginx,
-        apache: config.apache,
-        express: config.express,
-        nextjs: config.nextjs
+        key: headerKey, name: config.name, description: config.description,
+        status: present ? 'Configured' : 'Missing', value: headerVal || null,
+        scorePoints: present ? config.score : 0, maxPoints: config.score,
+        nginx: config.nginx, apache: config.apache, express: config.express, nextjs: config.nextjs
       });
     }
 
@@ -347,15 +377,14 @@ app.post('/api/analyze', async (req, res) => {
     const cspIssues = evaluateDeepCSP(headers['content-security-policy']);
     const dnsSecurity = await checkDnsSecurity(hostname);
     const securityTxt = await checkSecurityTxt(protocol, hostname);
+    const leaks = checkInfoLeakage(headers);
+    const cors = checkCors(headers, evilOrigin);
     
-    // Grab HTML Data
+    // HTML checks
     let htmlData = '';
-    if (typeof response.data === 'string') {
-        htmlData = response.data;
-    } else if (Buffer.isBuffer(response.data)) {
-        htmlData = response.data.toString();
-    }
-    const sriAnalysis = checkSRI(htmlData, hostname);
+    if (typeof response.data === 'string') htmlData = response.data;
+    else if (Buffer.isBuffer(response.data)) htmlData = response.data.toString();
+    const htmlSecurity = parseHtmlSecurity(htmlData, hostname, protocol);
 
     let tlsDetails = null;
     if (isHttps) {
@@ -378,10 +407,11 @@ app.post('/api/analyze', async (req, res) => {
     
     // Penalties
     cookieAnalysis.forEach(c => {
-      if (!c.secure || !c.httpOnly || c.sameSite === 'Missing') {
-        currentScore -= 2; // minor penalty for each insecure cookie
-      }
+      if (!c.secure || !c.httpOnly || c.sameSite === 'Missing') currentScore -= 2;
     });
+    if (leaks.length > 0) currentScore -= 5;
+    if (cors.vulnerable) currentScore -= 10;
+    if (htmlSecurity.mixedContent.length > 0) currentScore -= 10;
 
     const finalScore = Math.min(100, Math.max(0, currentScore));
     const grade = calculateGrade(finalScore);
@@ -402,7 +432,11 @@ app.post('/api/analyze', async (req, res) => {
         cspIssues: cspIssues,
         dnsSecurity: dnsSecurity,
         securityTxt: securityTxt,
-        sriAnalysis: sriAnalysis
+        leaks: leaks,
+        cors: cors,
+        sriAnalysis: htmlSecurity.sri,
+        mixedContent: htmlSecurity.mixedContent,
+        libraries: htmlSecurity.libraries
       }
     });
 

@@ -35,6 +35,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabButtons = document.querySelectorAll('.tab-btn');
     const tabPanes = document.querySelectorAll('.tab-pane');
 
+    // PDF Export functionality
+    const exportPdfBtn = document.getElementById('exportPdfBtn');
+    if (exportPdfBtn) {
+        exportPdfBtn.addEventListener('click', async () => {
+            if (resultsSection.classList.contains('hidden')) return;
+            const originalText = exportPdfBtn.textContent;
+            exportPdfBtn.textContent = 'Generating PDF...';
+            exportPdfBtn.disabled = true;
+
+            try {
+                const canvas = await window.html2canvas(resultsSection, {
+                    scale: 2,
+                    backgroundColor: '#0B0F19'
+                });
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                
+                pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                pdf.save(`WebGuard_Audit_${resultDomain.textContent}.pdf`);
+            } catch (err) {
+                console.error("Failed to export PDF", err);
+            } finally {
+                exportPdfBtn.textContent = originalText;
+                exportPdfBtn.disabled = false;
+            }
+        });
+    }
+
     tabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const targetTab = button.getAttribute('data-tab');
@@ -300,6 +330,88 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div class="advanced-item-desc">No insecure directives (e.g., unsafe-inline, *) detected.</div>
                     </li>`;
+        }
+
+        // 4. Render Leakage, CORS, and Mixed Content
+        const leakageList = document.getElementById('leakageList');
+        if (leakageList) leakageList.innerHTML = '';
+
+        // CORS
+        if (advanced.cors) {
+            const corsClass = advanced.cors.vulnerable ? 'missing' : 'configured';
+            const corsText = advanced.cors.vulnerable ? 'Vulnerable' : 'Safe';
+            leakageList.innerHTML += `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>CORS Configuration</span>
+                        <span class="status-indicator ${corsClass}">${corsText}</span>
+                    </div>
+                    <div class="advanced-item-desc">${advanced.cors.message}</div>
+                </li>`;
+        }
+
+        // Info Leaks
+        if (advanced.leaks && advanced.leaks.length > 0) {
+            advanced.leaks.forEach(leak => {
+                leakageList.innerHTML += `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>Information Leakage</span>
+                            <span class="status-indicator missing">Warning</span>
+                        </div>
+                        <div class="advanced-item-desc" style="color:var(--warning)">${leak}</div>
+                    </li>`;
+            });
+        } else {
+            leakageList.innerHTML += `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>Information Leakage</span>
+                        <span class="status-indicator configured">No Leaks</span>
+                    </div>
+                    <div class="advanced-item-desc">No sensitive server/stack version headers detected.</div>
+                </li>`;
+        }
+
+        // Mixed Content
+        if (advanced.mixedContent && advanced.mixedContent.length > 0) {
+            advanced.mixedContent.forEach(mc => {
+                leakageList.innerHTML += `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>Mixed Content</span>
+                            <span class="status-indicator missing">Insecure Resource</span>
+                        </div>
+                        <div class="advanced-item-desc" style="color:var(--warning)">${escapeHTML(mc)}</div>
+                    </li>`;
+            });
+        }
+
+        // 5. Third-Party Libraries Audit
+        const libraryList = document.getElementById('libraryList');
+        if (libraryList) {
+            libraryList.innerHTML = '';
+            if (!advanced.libraries || advanced.libraries.length === 0) {
+                libraryList.innerHTML = `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>Library Check</span>
+                            <span class="status-indicator configured">Clean</span>
+                        </div>
+                        <div class="advanced-item-desc">No common vulnerable frontend libraries detected in HTML source.</div>
+                    </li>`;
+            } else {
+                advanced.libraries.forEach(lib => {
+                    libraryList.innerHTML += `
+                        <li class="advanced-item">
+                            <div class="advanced-item-title">
+                                <span>${lib.name} Detected</span>
+                                <span class="status-indicator">Version: ${lib.version}</span>
+                            </div>
+                            <div class="advanced-item-desc">Found file: ${escapeHTML(lib.file)}</div>
+                        </li>`;
+                });
+            }
         }
     }
 

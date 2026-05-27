@@ -82,6 +82,9 @@
                             <span class="stat-lbl">Headers Missing</span>
                         </div>
                     </div>
+                    <div style="margin-top: 1rem;">
+                        <button class="copy-btn" id="exportPdfBtn" style="position: relative; top: 0; right: 0; background: linear-gradient(135deg, var(--primary) 0%, #4F46E5 100%);">📄 Download PDF Report</button>
+                    </div>
                 </div>
             </div>
 
@@ -141,6 +144,22 @@
                         <!-- Populated by JS -->
                     </ul>
                 </div>
+                
+                <!-- Information Leakage & CORS Card -->
+                <div class="card leakage-card">
+                    <h3>Server Leakage & CORS</h3>
+                    <ul class="advanced-list" id="leakageList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- Third-Party Libraries Card -->
+                <div class="card library-card">
+                    <h3>Third-Party Libraries</h3>
+                    <ul class="advanced-list" id="libraryList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
             </div>
 
             <!-- Headers Analysis Breakdown -->
@@ -187,6 +206,10 @@
         <p>&copy; 2026 WebGuard Auditor. Dedicated to raising security standard configurations globally.</p>
     </footer>
 
+    <!-- PDF Generation Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
     <script src="app.js"></script>
 </body>
 </html>

@@ -39,23 +39,185 @@ document.addEventListener('DOMContentLoaded', () => {
     const exportPdfBtn = document.getElementById('exportPdfBtn');
     if (exportPdfBtn) {
         exportPdfBtn.addEventListener('click', async () => {
-            if (resultsSection.classList.contains('hidden')) return;
+            if (!window.lastScanData) return;
+            const data = window.lastScanData;
+            
             const originalText = exportPdfBtn.textContent;
-            exportPdfBtn.textContent = 'Generating PDF...';
+            exportPdfBtn.textContent = 'Generating Professional PDF...';
             exportPdfBtn.disabled = true;
 
             try {
-                const canvas = await window.html2canvas(resultsSection, {
-                    scale: 2,
-                    backgroundColor: '#0B0F19'
-                });
-                const imgData = canvas.toDataURL('image/png');
-                const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
-                const pdfWidth = pdf.internal.pageSize.getWidth();
-                const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                // Populate the hidden template
+                document.getElementById('pdfTargetDomain').textContent = data.domain;
+                document.getElementById('pdfScanDate').textContent = new Date().toISOString().split('T')[0];
+                const gradeElem = document.getElementById('pdfGrade');
+                gradeElem.textContent = data.grade;
+                gradeElem.style.background = data.grade === 'A' || data.grade === 'B' ? '#10b981' : (data.grade === 'C' ? '#eab308' : '#ef4444');
+                document.getElementById('pdfScore').textContent = data.score + '/100';
                 
-                pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-                pdf.save(`Akhil_WebGuard_Audit_${resultDomain.textContent}.pdf`);
+                // AI Insights
+                document.getElementById('pdfAiPhishing').textContent = data.aiInsights?.phishingAnalysis || 'No AI data available.';
+                document.getElementById('pdfAiAttack').textContent = data.aiInsights?.attackNarrative || 'No AI data available.';
+                document.getElementById('pdfAiJs').textContent = data.aiInsights?.jsAnalysis || 'No JS analysis available.';
+                
+                // Active Exploits
+                const dastTable = document.getElementById('pdfDastTableBody');
+                dastTable.innerHTML = '';
+                let hasDast = false;
+                if (data.advanced && data.advanced.dast) {
+                    const d = data.advanced.dast;
+                    const addVulns = (arr, type) => {
+                        if(arr && arr.length > 0) {
+                            hasDast = true;
+                            arr.forEach(hit => dastTable.innerHTML += `<tr><td style="padding: 10px; border: 1px solid #e2e8f0; font-weight: bold; color: #ef4444;">${type}</td><td style="padding: 10px; border: 1px solid #e2e8f0;">?${escapeHTML(hit.param)}= <br><code style="background: #f1f5f9; padding: 2px 4px; display: block; margin-top: 5px;">${escapeHTML(hit.payload)}</code></td></tr>`);
+                        }
+                    };
+                    addVulns(d.sqli, 'SQL Injection');
+                    addVulns(d.xss, 'Reflected XSS');
+                    addVulns(d.lfi, 'Directory Traversal');
+                    addVulns(d.ssrf, 'SSRF');
+                }
+                if (!hasDast) dastTable.innerHTML = '<tr><td colspan="2" style="padding: 10px; border: 1px solid #e2e8f0;">No active vulnerabilities detected.</td></tr>';
+                
+                // Headers Table
+                const headersTable = document.getElementById('pdfHeadersTableBody');
+                headersTable.innerHTML = '';
+                if (data.headers && data.headers.length > 0) {
+                    data.headers.forEach(h => {
+                        const statusColor = h.status === 'Configured' ? '#10b981' : '#ef4444';
+                        headersTable.innerHTML += `<tr>
+                            <td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: bold;">${escapeHTML(h.name)}</td>
+                            <td style="padding: 10px; border: 1px solid #cbd5e1; color: ${statusColor}; font-weight: bold;">${h.status}</td>
+                            <td style="padding: 10px; border: 1px solid #cbd5e1; color: #475569;">${escapeHTML(h.description)}</td>
+                        </tr>`;
+                    });
+                } else {
+                    headersTable.innerHTML = '<tr><td colspan="3" style="padding: 10px; border: 1px solid #cbd5e1;">No headers analyzed.</td></tr>';
+                }
+
+                // SSL/TLS Details
+                const tlsTable = document.getElementById('pdfTlsTableBody');
+                tlsTable.innerHTML = '';
+                if (data.tlsDetails && data.tlsDetails.success) {
+                    const tls = data.tlsDetails;
+                    tlsTable.innerHTML += `<tr><td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: bold; width: 30%; background: #f8fafc;">Issuer</td><td style="padding: 10px; border: 1px solid #cbd5e1;">${escapeHTML(tls.issuer)}</td></tr>`;
+                    tlsTable.innerHTML += `<tr><td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: bold; background: #f8fafc;">Valid Until</td><td style="padding: 10px; border: 1px solid #cbd5e1;">${escapeHTML(tls.validTo)} (${tls.daysRemaining} days remaining)</td></tr>`;
+                    tlsTable.innerHTML += `<tr><td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: bold; background: #f8fafc;">Protocol & Cipher</td><td style="padding: 10px; border: 1px solid #cbd5e1;">${escapeHTML(tls.protocol)} / ${escapeHTML(tls.cipherName)}</td></tr>`;
+                } else {
+                    tlsTable.innerHTML = '<tr><td style="padding: 10px; border: 1px solid #cbd5e1; color: #ef4444; font-weight: bold;">Connection is not secure (HTTP or Invalid SSL)</td></tr>';
+                }
+
+                // Compliance
+                const compList = document.getElementById('pdfComplianceList');
+                compList.innerHTML = '';
+                const missingHeaders = data.headers ? data.headers.filter(h => h.status === 'Missing').length : 0;
+                compList.innerHTML += `<li style="margin-bottom: 8px;"><strong>OWASP Top 10 A05:2021 (Security Misconfiguration):</strong> <span style="color: ${missingHeaders > 0 ? '#ef4444' : '#10b981'}; font-weight: bold;">${missingHeaders > 0 ? 'FAIL ('+missingHeaders+' missing headers)' : 'PASS'}</span></li>`;
+                const tlsFail = !data.tlsDetails || data.tlsDetails.success === false;
+                compList.innerHTML += `<li style="margin-bottom: 8px;"><strong>PCI-DSS Req 4.1 (Strong Cryptography):</strong> <span style="color: ${tlsFail ? '#ef4444' : '#10b981'}; font-weight: bold;">${tlsFail ? 'FAIL' : 'PASS'}</span></li>`;
+                if (hasDast) {
+                    compList.innerHTML += `<li style="margin-bottom: 8px;"><strong>OWASP Top 10 A03:2021 (Injection):</strong> <span style="color: #ef4444; font-weight: bold;">FAIL (Active exploits found)</span></li>`;
+                }
+                
+                // Infra
+                document.getElementById('pdfOpenPorts').textContent = (data.advanced && data.advanced.openPorts && data.advanced.openPorts.length > 0) ? data.advanced.openPorts.join(', ') : 'None / Filtered';
+                document.getElementById('pdfTechStack').textContent = (data.advanced && data.advanced.infra) ? data.advanced.infra.server : 'Unknown';
+                document.getElementById('pdfSubdomains').textContent = (data.advanced && data.advanced.subdomains && data.advanced.subdomains.length > 0) ? data.advanced.subdomains.join(', ') : 'None found';
+                document.getElementById('pdfWaf').textContent = (data.advanced && data.advanced.waf) ? (data.advanced.waf.detected ? data.advanced.waf.provider : data.advanced.waf) : 'Not Detected';
+
+                // --- Extended Multi-Page Data Population ---
+                if (data.advanced) {
+                    const adv = data.advanced;
+                    
+                    // CSP
+                    const cspList = document.getElementById('pdfCspList');
+                    cspList.innerHTML = '';
+                    if (adv.cspIssues && adv.cspIssues.length > 0) {
+                        adv.cspIssues.forEach(iss => cspList.innerHTML += `<li style="margin-bottom: 5px; color: #ef4444;">❌ ${escapeHTML(iss)}</li>`);
+                    } else {
+                        cspList.innerHTML = '<li style="color: #10b981;">✅ CSP is strictly configured.</li>';
+                    }
+
+                    // Cookies
+                    const cookiesTable = document.getElementById('pdfCookiesTableBody');
+                    cookiesTable.innerHTML = '';
+                    if (adv.cookies && adv.cookies.details && adv.cookies.details.length > 0) {
+                        adv.cookies.details.forEach(c => {
+                            cookiesTable.innerHTML += `<tr>
+                                <td style="padding: 8px; border: 1px solid #cbd5e1; word-break: break-all;">${escapeHTML(c.name)}</td>
+                                <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: center; color: ${c.httpOnly ? '#10b981' : '#ef4444'}">${c.httpOnly ? 'Yes' : 'No'}</td>
+                                <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: center; color: ${c.secure ? '#10b981' : '#ef4444'}">${c.secure ? 'Yes' : 'No'}</td>
+                                <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: center; color: ${c.sameSite !== 'None' ? '#10b981' : '#ef4444'}">${escapeHTML(c.sameSite)}</td>
+                            </tr>`;
+                        });
+                    } else {
+                        cookiesTable.innerHTML = '<tr><td colspan="4" style="padding: 8px; border: 1px solid #cbd5e1; text-align: center;">No cookies detected.</td></tr>';
+                    }
+
+                    // DNS (SPF/DMARC)
+                    const dnsTable = document.getElementById('pdfDnsTableBody');
+                    dnsTable.innerHTML = '';
+                    if (adv.dnsSecurity) {
+                        const spf = adv.dnsSecurity.spf;
+                        const dmarc = adv.dnsSecurity.dmarc;
+                        dnsTable.innerHTML += `<tr><td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold; width: 20%;">SPF Record</td><td style="padding: 8px; border: 1px solid #cbd5e1; color: ${spf.present ? '#10b981' : '#ef4444'}">${spf.present ? 'Present' : 'Missing'}</td><td style="padding: 8px; border: 1px solid #cbd5e1; word-break: break-all;">${spf.record ? escapeHTML(spf.record) : 'N/A'}</td></tr>`;
+                        dnsTable.innerHTML += `<tr><td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold;">DMARC Record</td><td style="padding: 8px; border: 1px solid #cbd5e1; color: ${dmarc.present ? '#10b981' : '#ef4444'}">${dmarc.present ? 'Present' : 'Missing'}</td><td style="padding: 8px; border: 1px solid #cbd5e1; word-break: break-all;">${dmarc.record ? escapeHTML(dmarc.record) : 'N/A'}</td></tr>`;
+                    }
+
+                    // Fuzzer
+                    const fuzzerList = document.getElementById('pdfFuzzerList');
+                    fuzzerList.innerHTML = '';
+                    let fuzzCount = 0;
+                    if (adv.fuzzer) {
+                        const addFuzz = (arr, prefix) => {
+                            if(arr && arr.length > 0) {
+                                arr.forEach(f => {
+                                    fuzzCount++;
+                                    fuzzerList.innerHTML += `<li><span style="color: #ef4444; font-weight: bold; margin-right: 10px;">HTTP ${f.status}</span> <span style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${prefix}${escapeHTML(f.path)}</span></li>`;
+                                });
+                            }
+                        };
+                        addFuzz(adv.fuzzer.exposedFiles, 'File: ');
+                        addFuzz(adv.fuzzer.hiddenDirs, 'Dir: ');
+                        addFuzz(adv.fuzzer.apis, 'API: ');
+                    }
+                    if (fuzzCount === 0) fuzzerList.innerHTML = '<li>No sensitive exposed paths detected.</li>';
+
+                    // Leaks & Secrets
+                    const leaksList = document.getElementById('pdfLeaksList');
+                    const secretsList = document.getElementById('pdfSecretsList');
+                    leaksList.innerHTML = '';
+                    secretsList.innerHTML = '';
+                    
+                    if (adv.leaks && adv.leaks.length > 0) {
+                        adv.leaks.forEach(l => leaksList.innerHTML += `<li style="color: #ef4444;">${escapeHTML(l)}</li>`);
+                    } else {
+                        leaksList.innerHTML = '<li style="color: #64748b;">No header information leaks detected.</li>';
+                    }
+                    
+                    if (adv.domSec && adv.domSec.secrets && adv.domSec.secrets.length > 0) {
+                        adv.domSec.secrets.forEach(s => secretsList.innerHTML += `<li style="color: #ef4444; word-break: break-all;"><code>${escapeHTML(s)}</code></li>`);
+                    } else {
+                        secretsList.innerHTML = '<li style="color: #64748b;">No hardcoded secrets detected in HTML source.</li>';
+                    }
+                }
+
+
+                // Temporarily show for rendering
+                const element = document.getElementById('pdfReportTemplate');
+                element.style.display = 'block';
+
+                const opt = {
+                  margin:       0,
+                  filename:     `Akhil_WebGuard_Executive_Report_${data.domain}.pdf`,
+                  image:        { type: 'jpeg', quality: 0.98 },
+                  html2canvas:  { scale: 2, useCORS: true },
+                  jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+                };
+
+                await html2pdf().set(opt).from(element).save();
+                
+                element.style.display = 'none';
+
             } catch (err) {
                 console.error("Failed to export PDF", err);
             } finally {
@@ -89,9 +251,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const sastResults = document.getElementById('sastResults');
 
     // UI Toggles
-    if(dastModeBtn) dastModeBtn.addEventListener('click', () => { dastModeBtn.classList.add('active'); sastModeBtn.classList.remove('active'); dastModeContainer.classList.remove('hidden'); sastModeContainer.classList.add('hidden'); });
-    if(sastModeBtn) sastModeBtn.addEventListener('click', () => { sastModeBtn.classList.add('active'); dastModeBtn.classList.remove('active'); sastModeContainer.classList.remove('hidden'); dastModeContainer.classList.add('hidden'); });
+    const bulkModeBtn = document.getElementById('bulkModeBtn');
+    const scheduleModeBtn = document.getElementById('scheduleModeBtn');
+    const bulkModeContainer = document.getElementById('bulkModeContainer');
+    const scheduleModeContainer = document.getElementById('scheduleModeContainer');
+
+    const switchTab = (activeBtn, activeContainer) => {
+        if(dastModeBtn) dastModeBtn.classList.remove('active');
+        if(sastModeBtn) sastModeBtn.classList.remove('active');
+        if(bulkModeBtn) bulkModeBtn.classList.remove('active');
+        if(scheduleModeBtn) scheduleModeBtn.classList.remove('active');
+        
+        if(dastModeContainer) dastModeContainer.classList.add('hidden');
+        if(sastModeContainer) sastModeContainer.classList.add('hidden');
+        if(bulkModeContainer) bulkModeContainer.classList.add('hidden');
+        if(scheduleModeContainer) scheduleModeContainer.classList.add('hidden');
+        
+        activeBtn.classList.add('active');
+        activeContainer.classList.remove('hidden');
+    };
+
+    if(dastModeBtn) dastModeBtn.addEventListener('click', () => switchTab(dastModeBtn, dastModeContainer));
+    if(sastModeBtn) sastModeBtn.addEventListener('click', () => switchTab(sastModeBtn, sastModeContainer));
+    if(bulkModeBtn) bulkModeBtn.addEventListener('click', () => switchTab(bulkModeBtn, bulkModeContainer));
+    if(scheduleModeBtn) scheduleModeBtn.addEventListener('click', () => { switchTab(scheduleModeBtn, scheduleModeContainer); loadWatchlist(); });
+    
     if(toggleHeadersBtn) toggleHeadersBtn.addEventListener('click', () => { customHeadersContainer.classList.toggle('hidden'); document.getElementById('headerToggleIcon').textContent = customHeadersContainer.classList.contains('hidden') ? '▶' : '▼'; });
+
 
     // SAST Submit Logic
     if(sastSubmitBtn) sastSubmitBtn.addEventListener('click', async () => {
@@ -160,6 +346,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function renderResults(data) {
+        window.lastScanData = data;
+        
         // Domain and Status Grade
         resultDomain.textContent = data.domain;
         gradeValue.textContent = data.grade;
@@ -279,6 +467,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Transition results into view
         resultsSection.classList.remove('hidden');
+        if (advanced) {
+            window.renderD3Map(advanced, data.domain);
+        }
         resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
@@ -971,3 +1162,207 @@ function copyConfig(elementId) {
         }, 2000);
     });
 }
+
+// --- NEW ENTERPRISE FEATURES LOGIC ---
+
+// Bulk Analysis
+const bulkSubmitBtn = document.getElementById('bulkSubmitBtn');
+if (bulkSubmitBtn) {
+    bulkSubmitBtn.addEventListener('click', async () => {
+        const rawUrls = document.getElementById('bulkUrlsInput').value;
+        const urls = rawUrls.split('\n').map(u => u.trim()).filter(u => u);
+        if(urls.length === 0) return alert('Enter at least one URL');
+        if(urls.length > 20) return alert('Max 20 URLs allowed for bulk scan.');
+        
+        bulkSubmitBtn.disabled = true;
+        bulkSubmitBtn.querySelector('.btn-text').textContent = 'Scanning Batch...';
+        
+        try {
+            const res = await fetch('/api/bulk-analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ urls })
+            });
+            const data = await res.json();
+            const bulkResults = document.getElementById('bulkResults');
+            bulkResults.innerHTML = '<h3 style="margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Bulk Scan Results</h3>';
+            if (data.results) {
+                data.results.forEach(r => {
+                    const color = r.status === 'Success' ? '#10b981' : '#ef4444';
+                    bulkResults.innerHTML += `<div style="padding: 10px; border: 1px solid var(--border); margin-bottom: 5px; border-radius: 4px;">
+                        <strong>${escapeHTML(r.url)}</strong> - <span style="color: ${color}">${r.status}</span>
+                        ${r.grade ? `(Grade: ${r.grade}, Score: ${r.score})` : ''}
+                    </div>`;
+                });
+            }
+            bulkResults.classList.remove('hidden');
+        } catch (e) {
+            alert('Bulk scan failed.');
+        } finally {
+            bulkSubmitBtn.disabled = false;
+            bulkSubmitBtn.querySelector('.btn-text').textContent = 'Run Bulk Scan';
+        }
+    });
+}
+
+// Schedule Watchlist
+const scheduleAddBtn = document.getElementById('scheduleAddBtn');
+if (scheduleAddBtn) {
+    scheduleAddBtn.addEventListener('click', async () => {
+        const url = document.getElementById('scheduleUrlInput').value.trim();
+        const freq = document.getElementById('scheduleFreq').value;
+        if(!url) return;
+        scheduleAddBtn.disabled = true;
+        try {
+            await fetch('/api/schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, freq })
+            });
+            document.getElementById('scheduleUrlInput').value = '';
+            loadWatchlist();
+        } catch(e) {
+            alert('Failed to add to watchlist.');
+        }
+        scheduleAddBtn.disabled = false;
+    });
+}
+
+async function loadWatchlist() {
+    try {
+        const res = await fetch('/api/watchlist');
+        const data = await res.json();
+        const list = document.getElementById('watchlistItems');
+        list.innerHTML = '';
+        if (data.watchlist && data.watchlist.length > 0) {
+            data.watchlist.forEach(item => {
+                list.innerHTML += `<li style="padding: 10px; border: 1px solid var(--border); margin-bottom: 5px; border-radius: 4px; display: flex; justify-content: space-between;">
+                    <span><strong>${escapeHTML(item.url)}</strong> (${item.freq})</span>
+                    <span style="color: ${item.status === 'Healthy' ? '#10b981' : '#eab308'}">${item.status}</span>
+                </li>`;
+            });
+        } else {
+            list.innerHTML = '<li style="color: var(--text-secondary); text-align: center;">No targets in watchlist.</li>';
+        }
+    } catch(e) {}
+}
+
+// Interactive 3D D3.js Map Rendering
+window.renderD3Map = function(advancedData, rootDomain) {
+    const mapContainer = document.getElementById('d3MapContainer');
+    mapContainer.innerHTML = ''; // clear previous
+    if (!advancedData) return;
+    
+    const nodes = [];
+    const links = [];
+    
+    // Root Node
+    nodes.push({ id: rootDomain, group: 1, radius: 25 });
+    
+    // Subdomains
+    if (advancedData.subdomains) {
+        advancedData.subdomains.forEach(sub => {
+            nodes.push({ id: sub, group: 2, radius: 15 });
+            links.push({ source: rootDomain, target: sub });
+        });
+    }
+    
+    // Open Ports
+    if (advancedData.openPorts) {
+        advancedData.openPorts.forEach(port => {
+            const portId = 'Port ' + port;
+            nodes.push({ id: portId, group: 3, radius: 10 });
+            links.push({ source: rootDomain, target: portId });
+        });
+    }
+    
+    // Tech Stack
+    if (advancedData.techStack) {
+        advancedData.techStack.forEach(tech => {
+            nodes.push({ id: tech, group: 4, radius: 10 });
+            links.push({ source: rootDomain, target: tech });
+        });
+    }
+
+    const width = mapContainer.clientWidth || 800;
+    const height = mapContainer.clientHeight || 500;
+
+    const svg = d3.select("#d3MapContainer").append("svg")
+        .attr("width", "100%")
+        .attr("height", "100%")
+        .attr("viewBox", [0, 0, width, height]);
+
+    const simulation = d3.forceSimulation(nodes)
+        .force("link", d3.forceLink(links).id(d => d.id).distance(100))
+        .force("charge", d3.forceManyBody().strength(-300))
+        .force("center", d3.forceCenter(width / 2, height / 2));
+
+    const link = svg.append("g")
+        .attr("stroke", "#334155")
+        .attr("stroke-opacity", 0.6)
+        .selectAll("line")
+        .data(links)
+        .join("line")
+        .attr("stroke-width", 2);
+
+    const color = d3.scaleOrdinal().domain([1, 2, 3, 4]).range(["#3b82f6", "#10b981", "#ef4444", "#eab308"]);
+
+    const node = svg.append("g")
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1.5)
+        .selectAll("circle")
+        .data(nodes)
+        .join("circle")
+        .attr("r", d => d.radius)
+        .attr("fill", d => color(d.group))
+        .call(drag(simulation));
+
+    const labels = svg.append("g")
+        .selectAll("text")
+        .data(nodes)
+        .join("text")
+        .text(d => d.id)
+        .attr("font-size", "10px")
+        .attr("fill", "#cbd5e1")
+        .attr("dx", 12)
+        .attr("dy", 4);
+
+    simulation.on("tick", () => {
+        link
+            .attr("x1", d => d.source.x)
+            .attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x)
+            .attr("y2", d => d.target.y);
+
+        node
+            .attr("cx", d => d.x)
+            .attr("cy", d => d.y);
+            
+        labels
+            .attr("x", d => d.x)
+            .attr("y", d => d.y);
+    });
+
+    function drag(simulation) {
+        function dragstarted(event) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            event.subject.fx = event.subject.x;
+            event.subject.fy = event.subject.y;
+        }
+        function dragged(event) {
+            event.subject.fx = event.x;
+            event.subject.fy = event.y;
+        }
+        function dragended(event) {
+            if (!event.active) simulation.alphaTarget(0);
+            event.subject.fx = null;
+            event.subject.fy = null;
+        }
+        return d3.drag()
+            .on("start", dragstarted)
+            .on("drag", dragged)
+            .on("end", dragended);
+    }
+    
+    document.getElementById('attackSurfaceSection').classList.remove('hidden');
+};

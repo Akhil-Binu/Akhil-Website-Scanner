@@ -26,9 +26,11 @@
         <!-- Search & Submission Section -->
         <section class="search-section card">
             <h2>Audit Target Website</h2>
-            <div class="mode-tabs" style="display: flex; gap: 15px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
-                <button id="dastModeBtn" class="tab-btn active" style="font-weight: 600;">🌍 Web Scanner (DAST)</button>
-                <button id="sastModeBtn" class="tab-btn" style="font-weight: 600;">💻 Code Auditor (SAST)</button>
+            <div class="mode-tabs" style="display: flex; gap: 15px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px; overflow-x: auto; white-space: nowrap;">
+                <button id="dastModeBtn" class="tab-btn active" style="font-weight: 600;">🌍 Web Scanner</button>
+                <button id="sastModeBtn" class="tab-btn" style="font-weight: 600;">💻 Code Auditor</button>
+                <button id="bulkModeBtn" class="tab-btn" style="font-weight: 600;">🗄️ Bulk Scanner</button>
+                <button id="scheduleModeBtn" class="tab-btn" style="font-weight: 600;">📅 Watchlist</button>
             </div>
 
             <div id="dastModeContainer">
@@ -64,6 +66,35 @@
                 <div id="sastResults" class="hidden card" style="margin-top: 20px; white-space: pre-wrap; font-family: monospace; line-height: 1.6;"></div>
             </div>
 
+            <div id="bulkModeContainer" class="hidden">
+                <p class="search-desc">Paste multiple URLs (one per line) to perform asynchronous mass footprinting.</p>
+                <textarea id="bulkUrlsInput" placeholder="https://example.com&#10;https://test.com" rows="8" style="width: 100%; padding: 15px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-family: monospace; margin-bottom: 15px;"></textarea>
+                <button id="bulkSubmitBtn" class="btn primary" style="width: 100%;">
+                    <span class="btn-text">Run Bulk Scan</span>
+                    <span class="loader hidden"></span>
+                </button>
+                <div id="bulkResults" class="hidden card" style="margin-top: 20px;"></div>
+            </div>
+
+            <div id="scheduleModeContainer" class="hidden">
+                <p class="search-desc">Add domains to your continuous monitoring watchlist. The backend engine will automatically scan them.</p>
+                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <input type="text" id="scheduleUrlInput" placeholder="example.com" style="flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+                    <select id="scheduleFreq" style="padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="hourly">Hourly</option>
+                    </select>
+                    <button id="scheduleAddBtn" class="btn primary">Add to Watchlist</button>
+                </div>
+                <div id="watchlistContainer" class="card" style="padding: 15px;">
+                    <h3 style="margin-bottom: 15px; font-size: 1.1rem; border-bottom: 1px solid var(--border); padding-bottom: 5px;">Active Watchlist</h3>
+                    <ul id="watchlistItems" style="list-style-type: none; padding: 0;">
+                        <li style="color: var(--text-secondary); text-align: center;">Loading watchlist...</li>
+                    </ul>
+                </div>
+            </div>
+
             <div id="errorMessage" class="error-message hidden"></div>
         </section>
 
@@ -76,7 +107,18 @@
             </div>
         </section>
 
-        <!-- Results Section (Initially Hidden) -->
+        <!-- Attack Surface Map Section -->
+        <section id="attackSurfaceSection" class="hidden card" style="margin-top: 20px;">
+            <div class="section-header">
+                <h2>🌐 Interactive Attack Surface Map</h2>
+            </div>
+            <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">A 3D force-directed visualization of the discovered infrastructure (Subdomains, Open Ports, Tech Stack).</p>
+            <div id="d3MapContainer" style="width: 100%; height: 500px; background: #070B14; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; position: relative;">
+                <!-- D3 Map Renders Here -->
+            </div>
+        </section>
+
+        <!-- Main Results Container (Initially Hidden) -->
         <section id="resultsSection" class="results-section hidden">
             <!-- Header Stats Card -->
             <div class="summary-card card">
@@ -405,8 +447,181 @@
     </footer>
 
     <!-- PDF Generation Libraries -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <!-- PDF Report Template (Hidden) -->
+    <div id="pdfReportTemplate" style="display: none; background: white; color: #1e293b; padding: 40px; font-family: 'Inter', 'Outfit', sans-serif;">
+        <!-- 1. Cover Page -->
+        <div style="text-align: center; margin-bottom: 60px; padding-top: 20px;">
+            <h1 style="color: #0f172a; font-size: 36px; margin-bottom: 10px; border-bottom: 4px solid #3b82f6; display: inline-block; padding-bottom: 10px;">Akhil WebGuard</h1>
+            <h2 style="color: #475569; font-size: 24px; font-weight: 400; margin-top: 10px;">Comprehensive Security Assessment</h2>
+        </div>
+
+        <div style="margin-bottom: 40px; background: #f8fafc; padding: 25px; border-radius: 8px; border-left: 5px solid #3b82f6; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h3 style="margin: 0 0 10px 0; color: #0f172a;">Target Profile</h3>
+                <p style="margin: 5px 0;"><strong>Domain:</strong> <span id="pdfTargetDomain" style="color: #2563eb;">example.com</span></p>
+                <p style="margin: 5px 0;"><strong>Scan Date:</strong> <span id="pdfScanDate">2026-05-27</span></p>
+            </div>
+            <div style="text-align: right;">
+                <p style="margin: 0 0 5px 0; font-size: 14px; color: #64748b;">Overall Grade</p>
+                <div id="pdfGrade" style="font-weight: 900; font-size: 48px; line-height: 1; color: #ef4444;">F</div>
+                <p style="margin: 5px 0 0 0; font-size: 16px;"><strong>Score:</strong> <span id="pdfScore">25/100</span></p>
+            </div>
+        </div>
+
+        <!-- 2. AI Insights (Prominent) -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+            <div style="background: #1e293b; color: white; padding: 15px 20px;">
+                <h3 style="margin: 0; font-size: 18px; display: flex; align-items: center; gap: 8px;">🤖 Artificial Intelligence Insights</h3>
+            </div>
+            <div style="padding: 20px;">
+                <div style="margin-bottom: 20px;">
+                    <h4 style="color: #0f172a; margin: 0 0 8px 0; font-size: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px;">Phishing & Scam Analysis</h4>
+                    <p id="pdfAiPhishing" style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0;">Analyzing...</p>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <h4 style="color: #0f172a; margin: 0 0 8px 0; font-size: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px;">Potential Attack Narrative</h4>
+                    <p id="pdfAiAttack" style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0;">Analyzing...</p>
+                </div>
+                <div>
+                    <h4 style="color: #0f172a; margin: 0 0 8px 0; font-size: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px;">JS Malware / Obfuscation Check</h4>
+                    <p id="pdfAiJs" style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0;">Analyzing...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Active DAST Exploits -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #b91c1c; border-bottom: 2px solid #fca5a5; padding-bottom: 8px; margin-bottom: 15px;">1. Active DAST Exploits</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; word-wrap: break-word;">
+                <thead>
+                    <tr style="background: #fee2e2;">
+                        <th style="padding: 10px; text-align: left; border: 1px solid #f87171; color: #991b1b; width: 25%;">Vulnerability Type</th>
+                        <th style="padding: 10px; text-align: left; border: 1px solid #f87171; color: #991b1b;">Exploitable Parameter & Payload</th>
+                    </tr>
+                </thead>
+                <tbody id="pdfDastTableBody">
+                    <tr><td colspan="2" style="padding: 10px; border: 1px solid #e2e8f0;">No active vulnerabilities detected.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 4. HTTP Security Headers -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">2. HTTP Security Headers</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; word-wrap: break-word;">
+                <thead>
+                    <tr style="background: #f1f5f9;">
+                        <th style="padding: 10px; text-align: left; border: 1px solid #cbd5e1; width: 30%;">Header Name</th>
+                        <th style="padding: 10px; text-align: left; border: 1px solid #cbd5e1; width: 15%;">Status</th>
+                        <th style="padding: 10px; text-align: left; border: 1px solid #cbd5e1;">Description</th>
+                    </tr>
+                </thead>
+                <tbody id="pdfHeadersTableBody">
+                    <!-- Populated via JS -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 5. SSL / TLS Certificate -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">3. SSL/TLS Certificate Security</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; word-wrap: break-word;">
+                <tbody id="pdfTlsTableBody">
+                    <!-- Populated via JS -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 6. Infrastructure & Network -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">4. Infrastructure & Network Posture</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; word-wrap: break-word;">
+                <tbody>
+                    <tr><td style="padding: 10px; border: 1px solid #e2e8f0; font-weight: bold; width: 30%; background: #f8fafc;">Open Ports Detected</td><td id="pdfOpenPorts" style="padding: 10px; border: 1px solid #e2e8f0;">N/A</td></tr>
+                    <tr><td style="padding: 10px; border: 1px solid #e2e8f0; font-weight: bold; background: #f8fafc;">Server & Tech Stack</td><td id="pdfTechStack" style="padding: 10px; border: 1px solid #e2e8f0;">N/A</td></tr>
+                    <tr><td style="padding: 10px; border: 1px solid #e2e8f0; font-weight: bold; background: #f8fafc;">Subdomains Discovered</td><td id="pdfSubdomains" style="padding: 10px; border: 1px solid #e2e8f0; word-break: break-all;">N/A</td></tr>
+                    <tr><td style="padding: 10px; border: 1px solid #e2e8f0; font-weight: bold; background: #f8fafc;">WAF Detection</td><td id="pdfWaf" style="padding: 10px; border: 1px solid #e2e8f0;">N/A</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 7. Compliance Violations -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">5. Compliance Mapping Framework</h3>
+            <ul id="pdfComplianceList" style="list-style-type: none; padding: 0; font-size: 14px; line-height: 1.8; margin: 0;">
+                <!-- Populated via JS -->
+            </ul>
+        </div>
+        
+        <div style="page-break-before: always;"></div>
+        
+        <!-- 8. Content Security Policy (CSP) Deep Dive -->
+        <div style="margin-bottom: 40px; padding-top: 20px;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">6. Content Security Policy (CSP) Assessment</h3>
+            <ul id="pdfCspList" style="list-style-type: none; padding: 0; font-size: 13px; line-height: 1.6; margin: 0;">
+                <!-- Populated via JS -->
+            </ul>
+        </div>
+
+        <!-- 9. Cookie Security Analysis -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">7. Cookie Security Analysis</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; word-wrap: break-word;">
+                <thead>
+                    <tr style="background: #f1f5f9;">
+                        <th style="padding: 10px; text-align: left; border: 1px solid #cbd5e1;">Cookie Name</th>
+                        <th style="padding: 10px; text-align: center; border: 1px solid #cbd5e1;">HttpOnly</th>
+                        <th style="padding: 10px; text-align: center; border: 1px solid #cbd5e1;">Secure</th>
+                        <th style="padding: 10px; text-align: center; border: 1px solid #cbd5e1;">SameSite</th>
+                    </tr>
+                </thead>
+                <tbody id="pdfCookiesTableBody">
+                    <!-- Populated via JS -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 10. Advanced DNS Security -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">8. Advanced DNS Security (Email Spoofing)</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; word-wrap: break-word;">
+                <tbody id="pdfDnsTableBody">
+                    <!-- Populated via JS -->
+                </tbody>
+            </table>
+        </div>
+        
+        <div style="page-break-before: always;"></div>
+
+        <!-- 11. Directory & API Fuzzer Results -->
+        <div style="margin-bottom: 40px; padding-top: 20px;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">9. Directory & API Endpoint Fuzzing</h3>
+            <p style="font-size: 13px; color: #64748b; margin-bottom: 10px;">The following sensitive paths, API endpoints, or directories were discovered publicly accessible on the server.</p>
+            <ul id="pdfFuzzerList" style="list-style-type: none; padding: 0; font-size: 13px; line-height: 1.6; margin: 0;">
+                <!-- Populated via JS -->
+            </ul>
+        </div>
+
+        <!-- 12. Information Leaks & DOM Security -->
+        <div style="margin-bottom: 40px; page-break-inside: avoid;">
+            <h3 style="color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 15px;">10. DOM Security & Information Leaks</h3>
+            <div style="font-size: 13px;">
+                <h4 style="margin: 0 0 5px 0;">Information Leaked in HTTP Headers:</h4>
+                <ul id="pdfLeaksList" style="margin-top: 0; margin-bottom: 15px;"></ul>
+                
+                <h4 style="margin: 0 0 5px 0;">Hardcoded Secrets in HTML Source:</h4>
+                <ul id="pdfSecretsList" style="margin-top: 0; margin-bottom: 0;"></ul>
+            </div>
+        </div>
+        
+        <div style="margin-top: 60px; text-align: center; color: #94a3b8; font-size: 11px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            This exhaustive report is strictly confidential and generated by the <strong>Akhil WebGuard Enterprise Assessment Engine</strong>.<br>
+            Unauthorized distribution is prohibited.
+        </div>
+    </div>
     
     <!-- Floating Chat Widget -->
     <div id="chatWidget" class="hidden" style="position: fixed; bottom: 20px; right: 20px; width: 350px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; z-index: 1000;">

@@ -207,11 +207,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 element.style.display = 'block';
 
                 const opt = {
-                  margin:       0,
+                  margin:       [0.4, 0.4, 0.4, 0.4],
                   filename:     `Akhil_WebGuard_Executive_Report_${data.domain}.pdf`,
                   image:        { type: 'jpeg', quality: 0.98 },
-                  html2canvas:  { scale: 2, useCORS: true },
-                  jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+                  html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
+                  jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' },
+                  pagebreak:    { mode: ['css', 'legacy'] }
                 };
 
                 await html2pdf().set(opt).from(element).save();
@@ -462,7 +463,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else if (aiContainer) {
             aiContainer.classList.add('hidden');
-            if (chatBtn) chatBtn.classList.add('hidden');
         }
 
         // Transition results into view

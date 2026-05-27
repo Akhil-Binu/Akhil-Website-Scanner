@@ -157,6 +157,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 sslStatusBadge.textContent = `Active & Secure (${data.tlsDetails.tlsStatus})`;
                 sslStatusBadge.className = 'ssl-badge secure';
             }
+            
+            document.getElementById('sslSans').textContent = (data.tlsDetails.sans && data.tlsDetails.sans.length > 0) ? data.tlsDetails.sans.join(', ') : 'None Detected';
+            document.getElementById('sslOcsp').textContent = (data.tlsDetails.ocsp && data.tlsDetails.ocsp.length > 0) ? data.tlsDetails.ocsp.join(', ') : 'None Detected';
+            
         } else {
             sslBadge.textContent = 'No SSL Connection';
             sslBadge.className = 'badge insecure';
@@ -413,6 +417,80 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         }
+
+        // 6. Network & Routing
+        const networkList = document.getElementById('networkList');
+        if (networkList) {
+            networkList.innerHTML = '';
+            
+            // HTTP Methods
+            const methClass = advanced.httpMethods.vulnerable ? 'missing' : 'configured';
+            const methStatus = advanced.httpMethods.vulnerable ? 'Vulnerable' : 'Safe';
+            networkList.innerHTML += `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>HTTP Methods (OPTIONS)</span>
+                        <span class="status-indicator ${methClass}">${methStatus}</span>
+                    </div>
+                    <div class="advanced-item-desc">
+                        Allowed: ${escapeHTML(advanced.httpMethods.methods)}<br>
+                        <span style="color:var(--text-secondary)">${escapeHTML(advanced.httpMethods.message)}</span>
+                    </div>
+                </li>`;
+                
+            // Directory Listing
+            const dirClass = advanced.dirListing.found ? 'missing' : 'configured';
+            const dirStatus = advanced.dirListing.found ? 'Exposed' : 'Safe';
+            networkList.innerHTML += `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>Directory Listing</span>
+                        <span class="status-indicator ${dirClass}">${dirStatus}</span>
+                    </div>
+                    <div class="advanced-item-desc">${escapeHTML(advanced.dirListing.message)}</div>
+                </li>`;
+        }
+
+        // 7. Cache Security
+        const cacheList = document.getElementById('cacheList');
+        if (cacheList && advanced.cacheSecurity) {
+            const cacheSecClass = advanced.cacheSecurity.isCached ? (advanced.cacheSecurity.message.includes('sensitive') ? 'missing' : 'configured') : 'configured';
+            cacheList.innerHTML = `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>Cache Directives</span>
+                        <span class="status-indicator ${cacheSecClass}">${advanced.cacheSecurity.posture}</span>
+                    </div>
+                    <div class="advanced-item-desc">
+                        <strong>Cache-Control:</strong> ${escapeHTML(advanced.cacheSecurity.cacheControl)}<br>
+                        <strong>Pragma:</strong> ${escapeHTML(advanced.cacheSecurity.pragma)}<br>
+                        <strong>Expires:</strong> ${escapeHTML(advanced.cacheSecurity.expires)}<br><br>
+                        <span style="color:var(--text-secondary)">${escapeHTML(advanced.cacheSecurity.message)}</span>
+                    </div>
+                </li>`;
+        }
+
+        // 8. SEO Metadata Spillage
+        const seoList = document.getElementById('seoList');
+        if (seoList && advanced.seo) {
+            seoList.innerHTML = '';
+            if (advanced.seo.length === 0) {
+                seoList.innerHTML = '<li class="advanced-item"><div class="advanced-item-desc">No Open Graph or Twitter metadata found.</div></li>';
+            } else {
+                advanced.seo.forEach(meta => {
+                    const seoClass = meta.spillage ? 'missing' : 'configured';
+                    const seoStatus = meta.spillage ? 'Spillage Detected' : 'Safe';
+                    seoList.innerHTML += `
+                        <li class="advanced-item">
+                            <div class="advanced-item-title">
+                                <span>${escapeHTML(meta.property)}</span>
+                                <span class="status-indicator ${seoClass}">${seoStatus}</span>
+                            </div>
+                            <div class="advanced-item-desc">${escapeHTML(meta.content)}</div>
+                        </li>`;
+                });
+            }
+        }
     }
 
     function updateGradeRingStyle(grade) {
@@ -464,7 +542,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function escapeHTML(str) {
-        return str
+        if (str === null || str === undefined) return '';
+        return String(str)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')

@@ -116,6 +116,14 @@
                         <span class="ssl-info-label">Status</span>
                         <span class="ssl-badge secure" id="sslStatusBadge">Active &amp; Secure</span>
                     </div>
+                    <div class="ssl-info-item" style="grid-column: 1 / -1; margin-top: 0.5rem;">
+                        <span class="ssl-info-label">Subject Alternative Names (SAN)</span>
+                        <span class="ssl-info-value" id="sslSans" style="font-size:0.85rem; color:var(--text-secondary);">None Detected</span>
+                    </div>
+                    <div class="ssl-info-item" style="grid-column: 1 / -1;">
+                        <span class="ssl-info-label">OCSP Responders</span>
+                        <span class="ssl-info-value" id="sslOcsp" style="font-size:0.85rem; color:var(--text-secondary);">None Detected</span>
+                    </div>
                 </div>
             </div>
 
@@ -157,6 +165,30 @@
                 <div class="card library-card">
                     <h3>Third-Party Libraries</h3>
                     <ul class="advanced-list" id="libraryList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- Network & Routing Card -->
+                <div class="card network-card">
+                    <h3>Network & Routing Posture</h3>
+                    <ul class="advanced-list" id="networkList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- Cache Security Card -->
+                <div class="card cache-card">
+                    <h3>Cache Security & Performance</h3>
+                    <ul class="advanced-list" id="cacheList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- SEO & Social Graph Card -->
+                <div class="card seo-card">
+                    <h3>Social Graph Metadata (Spillage)</h3>
+                    <ul class="advanced-list" id="seoList">
                         <!-- Populated by JS -->
                     </ul>
                 </div>

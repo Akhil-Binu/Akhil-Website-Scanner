@@ -55,7 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
                 
                 pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-                pdf.save(`WebGuard_Audit_${resultDomain.textContent}.pdf`);
+                pdf.save(`Akhil_WebGuard_Audit_${resultDomain.textContent}.pdf`);
             } catch (err) {
                 console.error("Failed to export PDF", err);
             } finally {

@@ -65,7 +65,7 @@ Akhil WebGuard is designed to be extremely lightweight and fast.
    npm install express axios cheerio
    ```
 
-3. Start the WebGuard backend engine:
+3. Start the Akhil WebGuard backend engine:
    ```bash
    node server.js
    ```
@@ -78,4 +78,4 @@ Akhil WebGuard is designed to be extremely lightweight and fast.
 - **For Active DAST Scanning**: Enter a URL containing query parameters (e.g., `http://testphp.vulnweb.com/listproducts.php?cat=1`).
 
 ---
-*Disclaimer: WebGuard is built for educational purposes and authorized security auditing. Do not scan targets without explicit permission.*
+*Disclaimer: Akhil WebGuard is built for educational purposes and authorized security auditing. Do not scan targets without explicit permission.*

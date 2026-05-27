@@ -1,8 +1,8 @@
-# WebGuard - Intelligent Cybersecurity Platform 🛡️
+# Akhil WebGuard - Intelligent Cybersecurity Platform 🛡️
 
-WebGuard is a state-of-the-art, lightning-fast web vulnerability scanner, footprinting tool, and Active DAST (Dynamic Application Security Testing) engine. Built with Node.js, it performs concurrent asynchronous scans to evaluate the security posture of any given target URL within seconds.
+Akhil WebGuard is a state-of-the-art, lightning-fast web vulnerability scanner, footprinting tool, and Active DAST (Dynamic Application Security Testing) engine. Built with Node.js, it performs concurrent asynchronous scans to evaluate the security posture of any given target URL within seconds.
 
-WebGuard has evolved from a passive HTTP header scanner into a comprehensive "Red Team" toolkit powered by Google Gemini AI.
+Akhil WebGuard has evolved from a passive HTTP header scanner into a comprehensive "Red Team" toolkit powered by Google Gemini AI.
 
 ---
 
@@ -31,7 +31,7 @@ WebGuard has evolved from a passive HTTP header scanner into a comprehensive "Re
 - **AI Scraper Defenses**: Analyzes `robots.txt` to determine if the site actively blocks modern LLM bots (`GPTBot`, `Anthropic-ai`).
 
 ### 4. 🔥 Active DAST Exploitation Engine
-When a URL with parameters is provided (e.g., `?id=1`), WebGuard automatically injects malicious payloads to verify exploitability:
+When a URL with parameters is provided (e.g., `?id=1`), Akhil WebGuard automatically injects malicious payloads to verify exploitability:
 - **SQL Injection (SQLi)**: Fires SQL payloads and fingerprints the response for database syntax errors.
 - **Cross-Site Scripting (XSS)**: Injects raw `<script>` tags to check for unsanitized payload reflection.
 - **Directory Traversal (LFI)**: Attempts to break out of the web root to access `/etc/passwd` or `win.ini`.
@@ -39,7 +39,7 @@ When a URL with parameters is provided (e.g., `?id=1`), WebGuard automatically i
 - **Authentication Weaknesses**: Explicitly analyzes HTML `<form>` elements for missing CSRF tokens, plaintext `GET` transmissions, and insecure `HTTP` actions.
 
 ### 5. 🧠 Google Gemini AI Intelligence
-WebGuard has a Google Gemini API key hardcoded into its backend engine, unlocking real-time generative AI insights based on your specific scan results:
+Akhil WebGuard has a Google Gemini API key hardcoded into its backend engine, unlocking real-time generative AI insights based on your specific scan results:
 - **Phishing & Scam Assessment**: Evaluates the homepage copywriting for social engineering indicators.
 - **Malicious JavaScript Analysis**: Extracts inline `<script>` tags and asks Gemini to evaluate them for obfuscated tracking malware or crypto-miners.
 - **Attack Chain Generation**: Gemini synthesizes the discovered vulnerabilities to write a custom, step-by-step narrative of how a hacker could breach the target.
@@ -49,7 +49,7 @@ WebGuard has a Google Gemini API key hardcoded into its backend engine, unlockin
 
 ## 🚀 How to Run Locally
 
-WebGuard is designed to be extremely lightweight and fast.
+Akhil WebGuard is designed to be extremely lightweight and fast.
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) installed on your machine.

@@ -393,7 +393,7 @@ async function checkActiveVulnerabilities(targetUrlObj) {
         injectPromises.push(testParam(param, "1' OR '1'='1", 'sqli', (data) => data.match(/(SQL syntax|mysql_fetch_array|ORA-|PostgreSQL query failed)/i)));
         
         // XSS
-        const xssPayload = `"><script>alert('WebGuardXSS')</script>`;
+        const xssPayload = `"><script>alert('AkhilWebGuardXSS')</script>`;
         injectPromises.push(testParam(param, xssPayload, 'xss', (data) => data.includes(xssPayload)));
         
         // LFI (Directory Traversal)
@@ -554,7 +554,7 @@ app.post('/api/analyze', async (req, res) => {
 
   try {
     const response = await axios.get(parsedUrl.toString(), {
-      headers: { 'User-Agent': 'Mozilla/5.0 WebGuardAuditor/5.0 Ultimate', 'Origin': 'https://evil-origin.com' },
+      headers: { 'User-Agent': 'Mozilla/5.0 AkhilWebGuardAuditor/5.0 Ultimate', 'Origin': 'https://evil-origin.com' },
       timeout: 15000, maxRedirects: 5, validateStatus: () => true
     });
 
@@ -660,7 +660,7 @@ app.post('/api/analyze', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
     const { message, context } = req.body;
     if (!GEMINI_API_KEY || !message) return res.status(400).json({ error: 'Missing key or message' });
-    const prompt = `You are WebGuard AI, a cybersecurity assistant helping a user understand their website audit.
+    const prompt = `You are Akhil WebGuard AI, a cybersecurity assistant helping a user understand their website audit.
 Context Data: ${JSON.stringify(context).substring(0, 3000)}
 User Question: ${message}
 Reply concisely and practically in 2-3 sentences. Do not use markdown backticks for formatting, just plain text.`;
@@ -669,4 +669,4 @@ Reply concisely and practically in 2-3 sentences. Do not use markdown backticks 
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(PORT, () => console.log(`WebGuard Auditor server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Akhil WebGuard Auditor server running on port ${PORT}`));

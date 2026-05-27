@@ -6,9 +6,11 @@ const path = require('path');
 const urlModule = require('url');
 const dns = require('dns').promises;
 const cheerio = require('cheerio');
+const net = require('net');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const GEMINI_API_KEY = "AIzaSyC9HpL3Wj7HLpbUNhKD2WE84XkLEFXvW1E";
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -110,12 +112,13 @@ function getTlsDetails(hostname) {
         const issuerName = cert.issuer.O || cert.issuer.CN || 'Unknown';
         const subjectName = cert.subject.O || cert.subject.CN || 'Unknown';
         const isSelfSigned = issuerName === subjectName;
+        const supportsHttp2 = socket.alpnProtocol === 'h2';
 
         resolve({
           success: true, issuer: issuerName, subject: subjectName,
           validFrom: cert.valid_from, validTo: cert.valid_to,
           daysRemaining, isExpired, protocol, cipherName: cipher.name, cipherVersion: cipher.version,
-          tlsStatus, sans, ocsp, isSelfSigned
+          tlsStatus, sans, ocsp, isSelfSigned, supportsHttp2
         });
       });
       socket.on('error', (err) => { socket.destroy(); resolve({ success: false, error: err.message }); });
@@ -205,7 +208,18 @@ async function getSubdomains(domain) {
         const res = await axios.get(`https://crt.sh/?q=%.${domain}&output=json`, { timeout: 5000, validateStatus: () => true });
         if (res.data && Array.isArray(res.data)) {
             const subs = new Set(res.data.map(d => d.name_value.toLowerCase().trim()));
-            return Array.from(subs).slice(0, 15); // limit to 15
+            const targets = Array.from(subs).slice(0, 15); // limit to 15
+            
+            const results = await Promise.all(targets.map(async sub => {
+                let status = 'Active';
+                let vulnerable = false;
+                try { await dns.resolve(sub); } catch(e) {
+                    if (e.code === 'ENOTFOUND') { status = 'Dangling DNS'; vulnerable = true; } 
+                    else { status = 'Unreachable'; }
+                }
+                return { domain: sub, status, vulnerable };
+            }));
+            return results;
         }
     } catch(e) {}
     return [];
@@ -270,6 +284,142 @@ async function checkSecurityTxt(baseUrl) {
     return { found: false };
 }
 
+// New Module: WAF Fingerprinter
+function checkWaf(headers) {
+    const wafs = [];
+    const h = JSON.stringify(headers).toLowerCase();
+    if (h.includes('cf-ray') || h.includes('cloudflare')) wafs.push('Cloudflare');
+    if (h.includes('x-sucuri')) wafs.push('Sucuri');
+    if (h.includes('x-amz-cf-id')) wafs.push('AWS WAF / CloudFront');
+    if (h.includes('akamai')) wafs.push('Akamai');
+    if (h.includes('incap_ses')) wafs.push('Imperva');
+    return wafs.length > 0 ? wafs.join(', ') : 'No prominent WAF detected';
+}
+
+// New Module: Open Port Scanner
+async function checkPorts(hostname) {
+    const ports = [21, 22, 23, 25, 53, 80, 443, 3306, 5432, 8080];
+    const openPorts = [];
+    const scanPort = (port) => new Promise(resolve => {
+        const s = new net.Socket();
+        s.setTimeout(1500);
+        s.on('connect', () => { s.destroy(); resolve(port); });
+        s.on('timeout', () => { s.destroy(); resolve(null); });
+        s.on('error', () => { s.destroy(); resolve(null); });
+        s.connect(port, hostname);
+    });
+    const results = await Promise.all(ports.map(p => scanPort(p)));
+    return results.filter(p => p !== null);
+}
+
+// New Module: Broken Link Hijacking
+async function checkBrokenLinks(html, hostname) {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const externalLinks = new Set();
+    $('a[href^="http"]').each((i, el) => {
+        try {
+            const u = new urlModule.URL($(el).attr('href'));
+            if (u.hostname && !u.hostname.includes(hostname)) externalLinks.add(u.hostname);
+        } catch(e){}
+    });
+    const targets = Array.from(externalLinks).slice(0, 15);
+    const deadLinks = [];
+    await Promise.all(targets.map(async domain => {
+        try { await dns.resolve(domain); } catch(e) { if (e.code === 'ENOTFOUND') deadLinks.push(domain); }
+    }));
+    return deadLinks;
+}
+
+// New Module: Directory Fuzzer & Sensitive Files
+async function checkDirectoryFuzzing(baseUrl) {
+    const paths = [
+        '/.env', '/.git/config', '/.DS_Store', '/docker-compose.yml', '/config.json',
+        '/admin', '/wp-admin', '/backup', '/backup.zip', '/old', '/test', '/staging',
+        '/graphql', '/api/docs', '/swagger-ui.html', '/openapi.json', '/server-status'
+    ];
+    const results = { exposedFiles: [], hiddenDirs: [], apis: [] };
+    const ping = async (path) => {
+        try {
+            const res = await axios.head(baseUrl + path, { timeout: 2000, validateStatus: () => true });
+            if (res.status === 200 || res.status === 401 || res.status === 403) return { path, status: res.status };
+        } catch(e) {}
+        return null;
+    };
+    const hits = await Promise.all(paths.map(p => ping(p)));
+    hits.filter(h => h !== null).forEach(hit => {
+        if (hit.path.match(/\.(env|git|DS|yml|json)$/)) results.exposedFiles.push(hit);
+        else if (hit.path.match(/(graphql|api|swagger|openapi)/)) results.apis.push(hit);
+        else results.hiddenDirs.push(hit);
+    });
+    return results;
+}
+
+// New Module: AI Scraper Defenses
+async function checkAiScrapers(baseUrl) {
+    try {
+        const res = await axios.get(`${baseUrl}/robots.txt`, { timeout: 2500, validateStatus: () => true });
+        if (res.status === 200) {
+            const txt = String(res.data).toLowerCase();
+            const blocksAi = txt.includes('gptbot') || txt.includes('anthropic-ai') || txt.includes('ccbot') || txt.includes('google-extended');
+            return { foundRobots: true, blocksAi };
+        }
+    } catch(e) {}
+    return { foundRobots: false, blocksAi: false };
+}
+
+// New Module: Active DAST Injection (SQLi, XSS, SSRF, LFI)
+async function checkActiveVulnerabilities(targetUrlObj) {
+    const results = { sqli: [], xss: [], ssrf: [], lfi: [] };
+    if (!targetUrlObj.search) return results; // Only scan if parameters exist
+    
+    const params = Array.from(targetUrlObj.searchParams.keys());
+    if (params.length === 0) return results;
+
+    const testParam = async (param, payload, type, checkFn) => {
+        try {
+            const testUrl = new urlModule.URL(targetUrlObj.href);
+            testUrl.searchParams.set(param, payload);
+            const res = await axios.get(testUrl.toString(), { timeout: 3000, validateStatus: () => true });
+            if (checkFn(String(res.data), res.status, res.headers)) {
+                results[type].push({ param, payload, url: testUrl.toString() });
+            }
+        } catch(e) {}
+    };
+
+    const injectPromises = [];
+    params.forEach(param => {
+        // SQLi
+        injectPromises.push(testParam(param, "1' OR '1'='1", 'sqli', (data) => data.match(/(SQL syntax|mysql_fetch_array|ORA-|PostgreSQL query failed)/i)));
+        
+        // XSS
+        const xssPayload = `"><script>alert('WebGuardXSS')</script>`;
+        injectPromises.push(testParam(param, xssPayload, 'xss', (data) => data.includes(xssPayload)));
+        
+        // LFI (Directory Traversal)
+        injectPromises.push(testParam(param, "../../../../../../etc/passwd", 'lfi', (data) => data.match(/root:x:0:0:/i)));
+        injectPromises.push(testParam(param, "..\\..\\..\\windows\\win.ini", 'lfi', (data) => data.match(/\[extensions\]/i)));
+        
+        // SSRF
+        if (param.toLowerCase().match(/(url|path|site|domain|redirect|api)/)) {
+             injectPromises.push(testParam(param, "http://169.254.169.254/latest/meta-data/", 'ssrf', (data) => data.includes('ami-id') || data.includes('instance-id')));
+        }
+    });
+
+    await Promise.all(injectPromises);
+    return results;
+}
+
+// Gemini Helper
+async function callGemini(apiKey, prompt) {
+    try {
+        const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            contents: [{ parts: [{ text: prompt }] }]
+        }, { timeout: 15000 });
+        return res.data.candidates[0].content.parts[0].text;
+    } catch(e) { return "AI Analysis Failed: Ensure your API key is valid or try again."; }
+}
+
 function identifyTech(headers, html) {
     const tech = [];
     if (headers['x-powered-by']) tech.push(`X-Powered-By: ${headers['x-powered-by']}`);
@@ -289,12 +439,15 @@ function parseHtmlSecurity(html, targetHostname, protocol) {
   const results = { 
       sri: { total: 0, missing: 0 }, mixedContent: [], libraries: [], seo: [], 
       domSec: { formsInsecure: 0, pwdInsecure: 0, hiddenLeaks: 0, sinks: 0, secrets: [] },
-      sourceMaps: false
+      auth: { missingCsrf: 0, insecureAction: 0, plaintextPasswords: 0 },
+      sourceMaps: false, homeText: '', inlineScripts: ''
   };
   
   if (!html) return results;
   const $ = cheerio.load(html);
   
+  results.homeText = $('body').text().replace(/\s+/g, ' ').trim();
+
   // Secrets Heuristic
   if (html.match(/AKIA[0-9A-Z]{16}/)) results.domSec.secrets.push('AWS Access Key (AKIA) Pattern Found');
   if (html.match(/AIza[0-9A-Za-z-_]{35}/)) results.domSec.secrets.push('Google API Key Pattern Found');
@@ -305,22 +458,39 @@ function parseHtmlSecurity(html, targetHostname, protocol) {
   $('script:not([src])').each((i, el) => {
       const code = $(el).html();
       if (code) {
+          results.inlineScripts += code + '\n';
           if (code.includes('innerHTML') || code.includes('document.write') || code.match(/eval\s*\(/)) {
               results.domSec.sinks++;
           }
       }
   });
 
-  // Forms
+  // Forms & Authentication
   $('form').each((i, el) => {
-      const action = $(el).attr('action');
-      if (!action || (action.startsWith('http://') && protocol === 'https:')) results.domSec.formsInsecure++;
+      const action = $(el).attr('action') || '';
+      const formHtml = $(el).html().toLowerCase();
+      
+      if (action.startsWith('http://') && protocol === 'https:') {
+          results.domSec.formsInsecure++;
+          results.auth.insecureAction++;
+      }
+      
+      // CSRF Check on POST forms
+      const method = $(el).attr('method') ? $(el).attr('method').toLowerCase() : 'get';
+      if (method === 'post') {
+          if (!formHtml.includes('csrf') && !formHtml.includes('token') && !formHtml.includes('authenticity_token')) {
+              results.auth.missingCsrf++;
+          }
+      }
   });
 
   // Passwords
   $('input[type="password"]').each((i, el) => {
       const auto = $(el).attr('autocomplete');
       if (!auto || (auto !== 'off' && auto !== 'new-password')) results.domSec.pwdInsecure++;
+      
+      const formMethod = $(el).closest('form').attr('method') ? $(el).closest('form').attr('method').toLowerCase() : 'get';
+      if (formMethod === 'get') results.auth.plaintextPasswords++; // GET puts pass in URL
   });
 
   // Hidden Inputs
@@ -405,9 +575,9 @@ app.post('/api/analyze', async (req, res) => {
       });
     }
 
-    // 15 Modules + Legacy Pro execution
+    // 15 Modules + Legacy Pro + Advanced + Red Team + DAST execution
     const [
-      infra, hstsPreloaded, subdomains, dnsSecurity, httpMethods, dirListing, cors, securityTxt
+      infra, hstsPreloaded, subdomains, dnsSecurity, httpMethods, dirListing, cors, securityTxt, openPorts, brokenLinks, fuzzer, aiScrapers, dast
     ] = await Promise.all([
       checkInfrastructure(baseUrl),
       isHttps ? checkHstsPreload(hostname) : false,
@@ -416,7 +586,12 @@ app.post('/api/analyze', async (req, res) => {
       checkHttpMethods(baseUrl),
       checkDirectoryListing(baseUrl),
       checkCors(baseUrl),
-      checkSecurityTxt(baseUrl)
+      checkSecurityTxt(baseUrl),
+      checkPorts(hostname),
+      checkBrokenLinks(String(response.data), hostname),
+      checkDirectoryFuzzing(baseUrl),
+      checkAiScrapers(baseUrl),
+      checkActiveVulnerabilities(parsedUrl)
     ]);
 
     const cookieAnalysis = analyzeCookies(headers['set-cookie']);
@@ -425,6 +600,7 @@ app.post('/api/analyze', async (req, res) => {
     const htmlSecurity = parseHtmlSecurity(String(response.data), hostname, protocol);
     const techStack = identifyTech(headers, String(response.data));
     const leaks = checkInfoLeakage(headers);
+    const waf = checkWaf(headers);
     
     // Header specific checks
     const refPolicy = headers['referrer-policy'] || 'Missing';
@@ -443,21 +619,53 @@ app.post('/api/analyze', async (req, res) => {
     if (htmlSecurity.domSec.sinks > 0) currentScore -= 10;
     if (htmlSecurity.mixedContent.length > 0) currentScore -= 10;
 
+    // AI Insights Module
+    let aiInsights = null;
+    if (GEMINI_API_KEY) {
+       const phishingPrompt = `Analyze this text extracted from a website homepage and determine if it sounds like a phishing site, scam, or highly suspicious. Reply with a brief 2-sentence analysis and a scam probability score (0-100%). Text:\n${htmlSecurity.homeText.substring(0, 3000)}`;
+       const attackChainPrompt = `You are a security expert. The following vulnerabilities were found on ${hostname}: Missing CSP, ${openPorts.length > 0 ? 'Open ports: ' + openPorts.join(', ') : ''}, Missing HSTS: ${!hstsPreloaded}. Write a 3-sentence narrative explaining a potential attack chain hackers could use based on these specific flaws.`;
+       
+       let jsPrompt = "No inline scripts to analyze.";
+       if (htmlSecurity.inlineScripts.length > 0) {
+           jsPrompt = `Analyze this inline JavaScript snippet for potential obfuscation, keylogging, or crypto-mining malware. Reply with a short 2-sentence verdict. JS:\n${htmlSecurity.inlineScripts.substring(0, 1500)}`;
+       }
+       
+       const [phishingAnalysis, attackNarrative, jsAnalysis] = await Promise.all([
+           callGemini(GEMINI_API_KEY, phishingPrompt),
+           callGemini(GEMINI_API_KEY, attackChainPrompt),
+           callGemini(GEMINI_API_KEY, jsPrompt)
+       ]);
+       aiInsights = { phishingAnalysis, attackNarrative, jsAnalysis };
+    }
+
     const grade = calculateGrade(Math.min(100, Math.max(0, currentScore)));
 
     return res.json({
       success: true, domain: hostname, score: Math.min(100, Math.max(0, currentScore)), grade,
       headersFound: auditResults.filter(h => h.status === 'Configured').length,
-      isHttps, headers: auditResults, tlsDetails,
+      isHttps, headers: auditResults, tlsDetails, aiInsights,
       advanced: {
         cookies: cookieAnalysis, cspIssues: cspEval.issues, hasFrameAncestors: cspEval.hasFrameAncestors,
         dnsSecurity, infra, hstsPreloaded, subdomains, cacheSecurity, httpMethods, dirListing,
         domSec: htmlSecurity.domSec, sourceMaps: htmlSecurity.sourceMaps, sriAnalysis: htmlSecurity.sriAnalysis,
         mixedContent: htmlSecurity.mixedContent, libraries: htmlSecurity.libraries, seo: htmlSecurity.seo,
-        techStack, refPolicy, refInsecure, cors, leaks, securityTxt
+        auth: htmlSecurity.auth,
+        techStack, refPolicy, refInsecure, cors, leaks, securityTxt, openPorts, brokenLinks, waf,
+        fuzzer, aiScrapers, dast
       }
     });
   } catch (error) { return res.status(500).json({ error: `Connection failed: ${error.message}` }); }
+});
+
+app.post('/api/chat', async (req, res) => {
+    const { message, context } = req.body;
+    if (!GEMINI_API_KEY || !message) return res.status(400).json({ error: 'Missing key or message' });
+    const prompt = `You are WebGuard AI, a cybersecurity assistant helping a user understand their website audit.
+Context Data: ${JSON.stringify(context).substring(0, 3000)}
+User Question: ${message}
+Reply concisely and practically in 2-3 sentences. Do not use markdown backticks for formatting, just plain text.`;
+    const reply = await callGemini(GEMINI_API_KEY, prompt);
+    res.json({ reply });
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

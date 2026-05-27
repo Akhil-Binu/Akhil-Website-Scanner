@@ -27,17 +27,16 @@
         <section class="search-section card">
             <h2>Audit Target Website</h2>
             <p class="search-desc">Enter any website URL or domain name below. WebGuard will inspect its publicly available HTTP response headers and SSL/TLS certificate configurations.</p>
+            <div class="search-container">
             <form id="auditForm" class="search-form">
-                <div class="input-group">
-                    <input type="text" id="targetUrl" placeholder="e.g., example.com or https://google.com" required autocomplete="off">
-                    <button type="submit" id="submitBtn">
-                        <span class="btn-text">Audit Website</span>
-                        <span class="loader hidden"></span>
-                    </button>
-                </div>
+                <input type="text" id="targetUrl" placeholder="Enter website URL (e.g., example.com)" required autocomplete="off">
+                <button type="submit" id="submitBtn">
+                    <span class="btn-text">Initialize Scan</span>
+                    <span class="loader hidden"></span>
+                </button>
             </form>
-            <div id="errorMessage" class="error-msg hidden"></div>
-        </section>
+            <div id="errorMessage" class="error-message hidden"></div>
+        </div></section>
 
         <!-- Loading Skeleton -->
         <section id="loadingSkeleton" class="skeleton-section hidden">
@@ -219,10 +218,106 @@
 
                 <!-- Subdomains & Preload Card -->
                 <div class="card subdomains-card" style="grid-column: 1 / -1;">
-                    <h3>Subdomains & Global HSTS</h3>
+                    <h3>Subdomains & Dangling DNS</h3>
                     <ul class="advanced-list" id="subdomainList">
                         <!-- Populated by JS -->
                     </ul>
+                </div>
+                
+                <!-- Red Team: Directory Fuzzing -->
+                <div class="card fuzzer-card" style="grid-column: 1 / -1;">
+                    <h3>Red Team: Directory & Sensitive File Fuzzer</h3>
+                    <ul class="advanced-list" id="fuzzerList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- Modern API Threats -->
+                <div class="card api-card">
+                    <h3>Modern API Threats</h3>
+                    <ul class="advanced-list" id="apiList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- AI Scraper Defenses -->
+                <div class="card ai-defense-card">
+                    <h3>AI Scraper Defenses</h3>
+                    <ul class="advanced-list" id="aiDefenseList">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Active DAST Vulnerability Engine -->
+            <div class="details-section" style="margin-top: 30px;">
+                <h3 style="color: #ef4444; border-bottom: 2px solid rgba(239, 68, 68, 0.2); padding-bottom: 10px;">🔥 Active DAST Exploitation Engine</h3>
+                <div class="advanced-audits-grid">
+                    
+                    <!-- SQL Injection -->
+                    <div class="card" style="border-left: 4px solid #ef4444;">
+                        <h3>SQL Injection (SQLi)</h3>
+                        <ul class="advanced-list" id="sqliList">
+                            <!-- Populated by JS -->
+                        </ul>
+                    </div>
+
+                    <!-- Cross-Site Scripting -->
+                    <div class="card" style="border-left: 4px solid #f97316;">
+                        <h3>Cross-Site Scripting (XSS)</h3>
+                        <ul class="advanced-list" id="xssList">
+                            <!-- Populated by JS -->
+                        </ul>
+                    </div>
+
+                    <!-- Directory Traversal / LFI -->
+                    <div class="card" style="border-left: 4px solid #ef4444;">
+                        <h3>Directory Traversal (LFI)</h3>
+                        <ul class="advanced-list" id="lfiList">
+                            <!-- Populated by JS -->
+                        </ul>
+                    </div>
+
+                    <!-- SSRF & Cloud Metadata -->
+                    <div class="card" style="border-left: 4px solid #eab308;">
+                        <h3>Server-Side Request Forgery</h3>
+                        <ul class="advanced-list" id="ssrfList">
+                            <!-- Populated by JS -->
+                        </ul>
+                    </div>
+
+                    <!-- Authentication & Forms -->
+                    <div class="card" style="grid-column: 1 / -1; border-top: 2px solid var(--border);">
+                        <h3>Authentication & Session Posture</h3>
+                        <ul class="advanced-list" id="authList">
+                            <!-- Populated by JS -->
+                        </ul>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- AI Intelligence Insights Section -->
+            <div id="aiInsightsContainer" class="hidden" style="margin-top: 30px;">
+                <div class="card ai-card" style="border: 2px solid var(--primary); background: rgba(59, 130, 246, 0.05);">
+                    <h2 style="margin-bottom: 20px; color: var(--primary);">🧠 AI WebGuard Intelligence</h2>
+                    <div class="advanced-audits-grid" style="grid-template-columns: 1fr;">
+                        
+                        <div class="card">
+                            <h3>Phishing & Scam Probability</h3>
+                            <p id="aiPhishingText" style="color: var(--text-secondary); line-height: 1.6;">Waiting for AI...</p>
+                        </div>
+
+                        <div class="card">
+                            <h3>Attack Chain Narrative</h3>
+                            <p id="aiAttackText" style="color: var(--text-secondary); line-height: 1.6;">Waiting for AI...</p>
+                        </div>
+
+                        <div class="card">
+                            <h3>Malicious JavaScript Analysis</h3>
+                            <p id="aiJsText" style="color: var(--text-secondary); line-height: 1.6;">Waiting for AI...</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -274,6 +369,24 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     
+    <!-- Floating Chat Widget -->
+    <div id="chatWidget" class="hidden" style="position: fixed; bottom: 20px; right: 20px; width: 350px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; z-index: 1000;">
+        <div style="background: var(--primary); color: white; padding: 15px; border-radius: 12px 12px 0 0; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
+            <span>🤖 Chat with AI Auditor</span>
+            <button id="closeChatBtn" style="background: transparent; border: none; color: white; cursor: pointer; font-size: 16px;">✖</button>
+        </div>
+        <div id="chatMessages" style="height: 300px; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
+            <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; font-size: 14px;">Hello! I'm your AI auditor. Ask me anything about this scan report!</div>
+        </div>
+        <div style="padding: 15px; border-top: 1px solid var(--border); display: flex; gap: 10px;">
+            <input type="text" id="chatInput" placeholder="Ask a question..." style="flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: rgba(0,0,0,0.2); color: white;">
+            <button id="sendChatBtn" class="btn primary" style="padding: 10px 15px;">Send</button>
+        </div>
+    </div>
+
+    <!-- Floating Chat Open Button -->
+    <button id="openChatBtn" class="hidden btn primary" style="position: fixed; bottom: 20px; right: 20px; border-radius: 50%; width: 60px; height: 60px; font-size: 24px; box-shadow: 0 5px 15px rgba(59,130,246,0.5); z-index: 999;">💬</button>
+
     <script src="app.js"></script>
 </body>
 </html>

@@ -154,7 +154,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 sslStatusBadge.className = 'ssl-badge expired';
             } else {
                 sslExpiry.textContent = `In ${data.tlsDetails.daysRemaining} Days (${new Date(data.tlsDetails.validTo).toLocaleDateString()})`;
-                sslStatusBadge.textContent = `Active & Secure (${data.tlsDetails.tlsStatus})`;
+                const sslStatus = `Valid • Exp: ${data.tlsDetails.daysRemaining || 0}d • ${data.tlsDetails.supportsHttp2 ? 'HTTP/2 Supported' : 'HTTP/1.1 Only'}`;
+                sslStatusBadge.textContent = `Active & Secure (${sslStatus})`;
                 sslStatusBadge.className = 'ssl-badge secure';
             }
             
@@ -218,6 +219,25 @@ document.addEventListener('DOMContentLoaded', () => {
         // Render Advanced Audits (DNS, Cookies, SRI, CSP)
         if (data.advanced) {
             renderAdvancedAudits(data.advanced);
+        }
+
+        // Render AI Insights
+        const aiContainer = document.getElementById('aiInsightsContainer');
+        const chatBtn = document.getElementById('openChatBtn');
+        if (data.aiInsights && aiContainer) {
+            aiContainer.classList.remove('hidden');
+            document.getElementById('aiPhishingText').textContent = data.aiInsights.phishingAnalysis;
+            document.getElementById('aiAttackText').textContent = data.aiInsights.attackNarrative;
+            document.getElementById('aiJsText').textContent = data.aiInsights.jsAnalysis;
+            
+            // Enable Chat Button
+            if (chatBtn) {
+                chatBtn.classList.remove('hidden');
+                window.lastAuditContext = data; // store globally for chat
+            }
+        } else if (aiContainer) {
+            aiContainer.classList.add('hidden');
+            if (chatBtn) chatBtn.classList.add('hidden');
         }
 
         // Transition results into view
@@ -405,16 +425,14 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="advanced-item-desc">No common vulnerable frontend libraries detected in HTML source.</div>
                     </li>`;
             } else {
-                advanced.libraries.forEach(lib => {
-                    libraryList.innerHTML += `
-                        <li class="advanced-item">
-                            <div class="advanced-item-title">
-                                <span>${lib.name} Detected</span>
-                                <span class="status-indicator">Version: ${lib.version}</span>
-                            </div>
-                            <div class="advanced-item-desc">Found file: ${escapeHTML(lib.file)}</div>
-                        </li>`;
-                });
+                libraryList.innerHTML = advanced.libraries.map(lib => `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>${lib.name} Detected</span>
+                            <span class="status-indicator">Version: ${lib.version}</span>
+                        </div>
+                        <div class="advanced-item-desc">Found file: ${escapeHTML(lib.file)}</div>
+                    </li>`).join('');
             }
         }
 
@@ -508,6 +526,19 @@ document.addEventListener('DOMContentLoaded', () => {
             addInfra('robots.txt', advanced.infra.robots);
             addInfra('sitemap.xml', advanced.infra.sitemap);
             addInfra('crossdomain/clientaccess', advanced.infra.crossdomain);
+
+            if (advanced.brokenLinks) {
+                const bClass = advanced.brokenLinks.length > 0 ? 'missing' : 'configured';
+                const bStatus = advanced.brokenLinks.length > 0 ? `${advanced.brokenLinks.length} Dead Links` : 'Clean';
+                infraList.innerHTML += `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>Broken Link Hijacking</span>
+                            <span class="status-indicator ${bClass}">${bStatus}</span>
+                        </div>
+                        <div class="advanced-item-desc">${advanced.brokenLinks.length > 0 ? escapeHTML(advanced.brokenLinks.join(', ')) : 'No hijackable outbound links detected.'}</div>
+                    </li>`;
+            }
         }
 
         // 10. Tech Fingerprint
@@ -604,6 +635,76 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="status-indicator ${advanced.hasFrameAncestors ? 'configured' : 'missing'}">${advanced.hasFrameAncestors ? 'Configured' : 'Missing'}</span>
                     </div>
                 </li>`;
+
+             if (advanced.openPorts) {
+                 const pClass = advanced.openPorts.length > 0 ? 'missing' : 'configured';
+                 const pStatus = advanced.openPorts.length > 0 ? 'Exposed' : 'Filtered';
+                 netList.innerHTML += `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>Open Ports Scanner</span>
+                            <span class="status-indicator ${pClass}">${pStatus}</span>
+                        </div>
+                        <div class="advanced-item-desc">${advanced.openPorts.length > 0 ? escapeHTML(advanced.openPorts.join(', ')) : 'All core database/admin ports filtered.'}</div>
+                    </li>`;
+             }
+             if (advanced.waf) {
+                 netList.innerHTML += `
+                    <li class="advanced-item">
+                        <div class="advanced-item-title">
+                            <span>WAF / CDN Fingerprint</span>
+                            <span class="status-indicator configured">Detected</span>
+                        </div>
+                        <div class="advanced-item-desc">${escapeHTML(advanced.waf)}</div>
+                    </li>`;
+             }
+        }
+
+        // 12. Red Team Modules
+        const fuzzerList = document.getElementById('fuzzerList');
+        const apiList = document.getElementById('apiList');
+        const aiDefenseList = document.getElementById('aiDefenseList');
+
+        if (fuzzerList && advanced.fuzzer) {
+            fuzzerList.innerHTML = '';
+            if (advanced.fuzzer.exposedFiles.length > 0) {
+                advanced.fuzzer.exposedFiles.forEach(hit => {
+                    fuzzerList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span style="color: #ef4444; font-weight: bold;">[CRITICAL] ${escapeHTML(hit.path)}</span><span class="status-indicator missing">HTTP ${hit.status}</span></div></li>`;
+                });
+            }
+            if (advanced.fuzzer.hiddenDirs.length > 0) {
+                advanced.fuzzer.hiddenDirs.forEach(hit => {
+                    fuzzerList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span>[DIR] ${escapeHTML(hit.path)}</span><span class="status-indicator missing" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.5);">HTTP ${hit.status}</span></div></li>`;
+                });
+            }
+            if (advanced.fuzzer.exposedFiles.length === 0 && advanced.fuzzer.hiddenDirs.length === 0) {
+                fuzzerList.innerHTML = `<li class="advanced-item">No sensitive files or common directories exposed.</li>`;
+            }
+        }
+
+        if (apiList && advanced.fuzzer) {
+            apiList.innerHTML = '';
+            if (advanced.fuzzer.apis.length > 0) {
+                advanced.fuzzer.apis.forEach(hit => {
+                    apiList.innerHTML += `<li class="advanced-item"><div class="advanced-item-title"><span style="color: #ef4444; font-weight: bold;">[API EXPOSED] ${escapeHTML(hit.path)}</span><span class="status-indicator missing">HTTP ${hit.status}</span></div></li>`;
+                });
+            } else {
+                apiList.innerHTML = `<li class="advanced-item">No exposed GraphQL or Swagger endpoints found.</li>`;
+            }
+        }
+
+        if (aiDefenseList && advanced.aiScrapers) {
+            aiDefenseList.innerHTML = '';
+            const statusClass = advanced.aiScrapers.blocksAi ? 'configured' : 'missing';
+            const statusText = advanced.aiScrapers.blocksAi ? 'Protected' : 'Vulnerable';
+            aiDefenseList.innerHTML += `
+                <li class="advanced-item">
+                    <div class="advanced-item-title">
+                        <span>LLM Scraper Protections</span>
+                        <span class="status-indicator ${statusClass}">${statusText}</span>
+                    </div>
+                    <div class="advanced-item-desc">${advanced.aiScrapers.blocksAi ? 'Site actively blocks known AI scrapers (e.g., GPTBot) in robots.txt.' : 'Site does not explicitly block AI scrapers. Content may be harvested for model training.'}</div>
+                </li>`;
         }
     }
 
@@ -663,6 +764,66 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
+    }
+
+    // Chat Widget Logic
+    const openChatBtn = document.getElementById('openChatBtn');
+    const closeChatBtn = document.getElementById('closeChatBtn');
+    const chatWidget = document.getElementById('chatWidget');
+    const sendChatBtn = document.getElementById('sendChatBtn');
+    const chatInput = document.getElementById('chatInput');
+    const chatMessages = document.getElementById('chatMessages');
+
+    if (openChatBtn && closeChatBtn && chatWidget) {
+        openChatBtn.addEventListener('click', () => {
+            chatWidget.classList.remove('hidden');
+            openChatBtn.classList.add('hidden');
+        });
+        closeChatBtn.addEventListener('click', () => {
+            chatWidget.classList.add('hidden');
+            openChatBtn.classList.remove('hidden');
+        });
+
+        const appendMsg = (txt, isUser) => {
+            const div = document.createElement('div');
+            div.style.padding = '10px';
+            div.style.borderRadius = '8px';
+            div.style.fontSize = '14px';
+            if (isUser) {
+                div.style.background = 'rgba(59, 130, 246, 0.2)';
+                div.style.alignSelf = 'flex-end';
+                div.style.color = '#fff';
+            } else {
+                div.style.background = 'rgba(255, 255, 255, 0.05)';
+                div.style.alignSelf = 'flex-start';
+                div.style.color = 'var(--text-secondary)';
+            }
+            div.textContent = txt;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        };
+
+        const sendMsg = async () => {
+            const msg = chatInput.value.trim();
+            if (!msg) return;
+            appendMsg(msg, true);
+            chatInput.value = '';
+
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg, context: window.lastAuditContext })
+                });
+                const data = await res.json();
+                appendMsg(data.reply || 'No response.', false);
+            } catch (e) {
+                appendMsg('Error reaching AI server.', false);
+            }
+        };
+
+        sendChatBtn.addEventListener('click', sendMsg);
+        chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMsg(); });
     }
 });
 

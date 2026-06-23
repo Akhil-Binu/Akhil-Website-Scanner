@@ -1089,6 +1089,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
     }
+    window.escapeHTML = escapeHTML;
 
     // Chat & PoC Modal Event Listeners
     if (document.getElementById('openChatBtn')) {
@@ -1190,7 +1191,7 @@ if (bulkSubmitBtn) {
                 data.results.forEach(r => {
                     const color = r.status === 'Success' ? '#10b981' : '#ef4444';
                     bulkResults.innerHTML += `<div style="padding: 10px; border: 1px solid var(--border); margin-bottom: 5px; border-radius: 4px;">
-                        <strong>${escapeHTML(r.url)}</strong> - <span style="color: ${color}">${r.status}</span>
+                        <strong>${window.escapeHTML(r.url)}</strong> - <span style="color: ${color}">${r.status}</span>
                         ${r.grade ? `(Grade: ${r.grade}, Score: ${r.score})` : ''}
                     </div>`;
                 });
@@ -1237,7 +1238,7 @@ async function loadWatchlist() {
         if (data.watchlist && data.watchlist.length > 0) {
             data.watchlist.forEach(item => {
                 list.innerHTML += `<li style="padding: 10px; border: 1px solid var(--border); margin-bottom: 5px; border-radius: 4px; display: flex; justify-content: space-between;">
-                    <span><strong>${escapeHTML(item.url)}</strong> (${item.freq})</span>
+                    <span><strong>${window.escapeHTML(item.url)}</strong> (${item.freq})</span>
                     <span style="color: ${item.status === 'Healthy' ? '#10b981' : '#eab308'}">${item.status}</span>
                 </li>`;
             });

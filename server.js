@@ -1123,4 +1123,9 @@ setInterval(async () => {
 }, 60000); // Check watchlist every 60 seconds
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(PORT, () => console.log(`Akhil WebGuard Auditor server running on port ${PORT}`));
+
+if (!process.env.VERCEL) {
+    app.listen(PORT, () => console.log(`Akhil WebGuard Auditor server running on port ${PORT}`));
+}
+
+module.exports = app;

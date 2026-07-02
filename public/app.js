@@ -1735,6 +1735,41 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     setTimeout(() => { statusEl.style.display = 'none'; }, 4000);
 });
 
+// ─── Regenerate Recovery Key ────────────────────────────────────────────────
+document.getElementById('regenKeyBtn').addEventListener('click', async () => {
+    const password = document.getElementById('regenKeyPassword').value;
+    const errEl = document.getElementById('regenKeyError');
+    errEl.classList.add('hidden');
+    document.getElementById('regenKeySuccessPane').classList.add('hidden');
+    if (!password) { errEl.textContent = 'Please confirm your password.'; errEl.classList.remove('hidden'); return; }
+    
+    if (!confirm('Are you sure you want to regenerate your recovery key? Your old key will stop working immediately.')) return;
+    
+    try {
+        const res = await fetch('/api/auth/regenerate-recovery-key', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` }, 
+            body: JSON.stringify({ password }) 
+        });
+        const d = await res.json();
+        if (!d.success) { errEl.textContent = d.error || 'Failed to regenerate key.'; errEl.classList.remove('hidden'); return; }
+        
+        document.getElementById('regenNewKeyDisplay').textContent = d.newRecoveryKey;
+        document.getElementById('regenKeySuccessPane').classList.remove('hidden');
+        document.getElementById('regenKeyPassword').value = '';
+    } catch (e) {
+        errEl.textContent = 'Server error.'; errEl.classList.remove('hidden');
+    }
+});
+
+document.getElementById('copyRegenKeyBtn').addEventListener('click', () => {
+    const key = document.getElementById('regenNewKeyDisplay').textContent;
+    navigator.clipboard.writeText(key).then(() => { 
+        document.getElementById('copyRegenKeyBtn').textContent = '✓ Copied!'; 
+        setTimeout(() => { document.getElementById('copyRegenKeyBtn').textContent = '📋 Copy Key'; }, 2000); 
+    });
+});
+
 // ─── Render New Scan Modules in Results ───────────────────────────────────────
 // Hook into the existing renderResults flow by extending window.renderAdvancedResults
 const _originalRenderAdvanced = window.renderAdvancedResults;

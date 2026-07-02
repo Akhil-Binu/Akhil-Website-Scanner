@@ -963,6 +963,26 @@ app.post('/api/auth/reset-password', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/auth/regenerate-recovery-key', requireAuth, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: 'Password is required to regenerate your recovery key.' });
+    
+    // Verify password for security
+    const user = db.getUserById(req.user.id);
+    const fullUser = db.getUserByEmail(user.email); // Need full record for password hash
+    const valid = await bcrypt.compare(password, fullUser.password);
+    if (!valid) return res.status(401).json({ error: 'Incorrect password.' });
+
+    // Generate new key
+    const crypto = require('crypto');
+    const newRecoveryKey = 'WGR-' + crypto.randomBytes(12).toString('hex').toUpperCase().match(/.{4}/g).join('-');
+    db.setRecoveryKey(user.id, newRecoveryKey);
+
+    res.json({ success: true, newRecoveryKey });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/auth/2fa/setup', requireAuth, async (req, res) => {
   try {
     const secret = speakeasy.generateSecret({ name: `WebGuard (${req.user.email})`, length: 20 });

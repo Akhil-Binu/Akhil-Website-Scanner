@@ -866,6 +866,25 @@
                 <p style="font-size:0.8rem;color:#10b981;">✅ Your key is stored encrypted per-account. It is never shared with other users.</p>
             </div>
 
+            <!-- Account Security: Regenerate Recovery Key -->
+            <div class="card" style="margin-bottom:1.5rem; border: 1px solid rgba(245,158,11,0.3);">
+                <h3 style="margin-bottom:0.5rem;">🔐 Account Security</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">Lost your recovery key? You can generate a new one. <strong style="color:#f59e0b;">Warning: Your old key will be permanently invalidated.</strong></p>
+                
+                <div id="regenKeyInputPane">
+                    <input type="password" id="regenKeyPassword" placeholder="Confirm your password" class="auth-input">
+                    <div id="regenKeyError" class="hidden" style="color:#ef4444;font-size:0.85rem;margin-bottom:0.75rem;"></div>
+                    <button id="regenKeyBtn" class="btn" style="border:1px solid #f59e0b; color:#f59e0b;">Regenerate Recovery Key</button>
+                </div>
+                
+                <div id="regenKeySuccessPane" class="hidden" style="margin-top:1rem;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:16px;">
+                    <p style="color:#10b981;font-weight:600;margin-bottom:8px;">✅ New key generated successfully!</p>
+                    <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;">Your new recovery key is shown below. <strong>Copy and save it now.</strong> It will not be shown again once you leave this page.</p>
+                    <div id="regenNewKeyDisplay" style="font-family:monospace;font-size:1.05rem;color:#10b981;letter-spacing:0.05em;word-break:break-all;background:#0f172a;padding:12px;border-radius:6px;border:1px solid rgba(16,185,129,0.2);margin-bottom:10px;text-align:center;"></div>
+                    <button id="copyRegenKeyBtn" class="btn primary" style="width:100%;">📋 Copy Key</button>
+                </div>
+            </div>
+
             <div id="settingsSaveStatus" style="display:none;color:#10b981;font-size:0.9rem;margin-bottom:1rem;"></div>
             <button id="saveSettingsBtn" class="btn primary" style="width:100%;padding:14px;">Save All Settings</button>
             <p style="margin-top:1rem;color:var(--text-secondary);font-size:0.8rem;text-align:center;">Settings are tied to your user account and stored securely on the server.</p>

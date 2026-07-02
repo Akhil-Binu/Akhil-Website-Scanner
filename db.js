@@ -2,7 +2,8 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const crypto = require('crypto');
 
-const DB_PATH = process.env.VERCEL ? path.join('/tmp', 'webguard.db') : path.join(__dirname, 'webguard.db');
+const isVercel = process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_REGION;
+const DB_PATH = isVercel ? path.join('/tmp', 'webguard.db') : path.join(__dirname, 'webguard.db');
 const db = new Database(DB_PATH);
 
 db.pragma('journal_mode = WAL');

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Akhil WebGuard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    .header {
+      background: linear-gradient(135deg, #1e3a5f, #0f172a);
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .header-logo { font-size: 22px; }
+    .header-title { font-size: 15px; font-weight: 700; color: #60a5fa; }
+    .header-sub { font-size: 11px; color: #64748b; }
+    .domain-bar {
+      padding: 12px 16px;
+      background: #1e293b;
+      font-size: 12px;
+      color: #94a3b8;
+      border-bottom: 1px solid #334155;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .content { padding: 16px; }
+    #loading { text-align: center; padding: 24px; }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #1e293b;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .score-ring-wrap { display: flex; justify-content: center; margin: 8px 0 16px; }
+    .score-ring {
+      width: 100px; height: 100px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column;
+      font-size: 28px; font-weight: 800;
+      border: 5px solid;
+    }
+    .score-ring .grade-label { font-size: 12px; font-weight: 500; opacity: 0.7; }
+    .grade-A { border-color: #10b981; color: #10b981; }
+    .grade-B { border-color: #3b82f6; color: #3b82f6; }
+    .grade-C { border-color: #f59e0b; color: #f59e0b; }
+    .grade-D { border-color: #f97316; color: #f97316; }
+    .grade-F { border-color: #ef4444; color: #ef4444; }
+    .info-row {
+      display: flex; justify-content: space-between;
+      padding: 8px 0; border-bottom: 1px solid #1e293b;
+      font-size: 13px;
+    }
+    .info-label { color: #64748b; }
+    .info-val { font-weight: 600; }
+    .badge { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: rgba(16,185,129,0.15); color: #10b981; }
+    .badge-red { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .btn-full {
+      display: block; width: 100%; margin-top: 14px;
+      padding: 10px; background: #2563eb; color: white;
+      border: none; border-radius: 8px; cursor: pointer;
+      font-size: 13px; font-weight: 600; text-align: center;
+      text-decoration: none; transition: background 0.2s;
+    }
+    .btn-full:hover { background: #1d4ed8; }
+    .error-box {
+      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px; padding: 16px; text-align: center; font-size: 13px;
+      color: #ef4444;
+    }
+    #result { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-logo">🛡️</div>
+    <div>
+      <div class="header-title">Akhil WebGuard</div>
+      <div class="header-sub">Security Score Checker</div>
+    </div>
+  </div>
+  <div class="domain-bar" id="domainBar">Detecting page...</div>
+
+  <div class="content">
+    <div id="loading">
+      <div class="spinner"></div>
+      <div style="font-size:13px; color:#64748b;">Checking security score...</div>
+    </div>
+
+    <div id="result">
+      <div class="score-ring-wrap">
+        <div class="score-ring" id="scoreRing">
+          <span id="scoreNum">--</span>
+          <span class="grade-label" id="gradeLabel">Grade</span>
+        </div>
+      </div>
+
+      <div class="info-row">
+        <span class="info-label">Security Score</span>
+        <span class="info-val" id="scoreDisplay">--/100</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Grade</span>
+        <span class="info-val" id="gradeDisplay">--</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">HTTPS</span>
+        <span id="httpsDisplay" class="badge">--</span>
+      </div>
+
+      <a id="fullScanBtn" href="#" target="_blank" class="btn-full">🔍 Run Full Deep Scan</a>
+    </div>
+
+    <div id="error" style="display:none;">
+      <div class="error-box">
+        ⚠️ Could not reach WebGuard server.<br>
+        <small style="color:#94a3b8; display:block; margin-top:6px;">Make sure the WebGuard app is running on localhost:3000</small>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

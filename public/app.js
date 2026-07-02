@@ -319,12 +319,16 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtn.disabled = true;
 
         try {
+            const sessionCookie = document.getElementById('sessionCookieInput') ? document.getElementById('sessionCookieInput').value.trim() : '';
+            const bearerToken = document.getElementById('bearerTokenInput') ? document.getElementById('bearerTokenInput').value.trim() : '';
+            const authToken = localStorage.getItem('wg_token');
+            const fetchHeaders = { 'Content-Type': 'application/json' };
+            if (authToken) fetchHeaders['Authorization'] = `Bearer ${authToken}`;
+
             const response = await fetch('/api/analyze', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ url, headers })
+                headers: fetchHeaders,
+                body: JSON.stringify({ url, headers, sessionCookie: sessionCookie || undefined, bearerToken: bearerToken || undefined })
             });
 
             const data = await response.json();
@@ -1367,3 +1371,484 @@ window.renderD3Map = function(advancedData, rootDomain) {
     
     document.getElementById('attackSurfaceSection').classList.remove('hidden');
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// ENTERPRISE FEATURE SUITE — Auth, Dashboard, Settings, OWASP, GDPR, CMS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ─── Auth State ─────────────────────────────────────────────────────────────
+let currentUser = null;
+let trendChartInstance = null;
+
+function getToken() { return localStorage.getItem('wg_token'); }
+function setToken(t) { localStorage.setItem('wg_token', t); }
+function clearToken() { localStorage.removeItem('wg_token'); localStorage.removeItem('wg_user'); }
+
+function updateNavAuth(user) {
+    currentUser = user;
+    if (user) {
+        document.getElementById('navAuthArea').style.display = 'none';
+        document.getElementById('navUserMenu').style.display = 'block';
+        document.getElementById('navHistoryBtn').style.display = 'block';
+        document.getElementById('navSettingsBtn').style.display = 'block';
+        document.getElementById('userNameDisplay').textContent = user.name || user.email;
+        document.getElementById('userEmailDisplay').textContent = user.email;
+    } else {
+        document.getElementById('navAuthArea').style.display = 'block';
+        document.getElementById('navUserMenu').style.display = 'none';
+        document.getElementById('navHistoryBtn').style.display = 'none';
+        document.getElementById('navSettingsBtn').style.display = 'none';
+    }
+}
+
+async function checkAuthOnLoad() {
+    const token = getToken();
+    if (!token) return;
+    try {
+        const res = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+            const d = await res.json();
+            updateNavAuth(d.user);
+            applyWhiteLabel();
+        } else { clearToken(); }
+    } catch (e) { /* server offline, silent fail */ }
+}
+
+// ─── White-Label ─────────────────────────────────────────────────────────────
+function applyWhiteLabel() {
+    const name = localStorage.getItem('wl_name');
+    const logo = localStorage.getItem('wl_logo');
+    if (name) {
+        const titleEl = document.getElementById('appTitle');
+        if (titleEl) titleEl.innerHTML = name;
+        document.title = name + ' // Security Auditor';
+    }
+    if (logo) {
+        const iconEl = document.getElementById('appIcon');
+        if (iconEl) { iconEl.innerHTML = `<img src="${logo}" style="height:32px;vertical-align:middle;" onerror="this.style.display='none';">`; }
+    }
+}
+
+// ─── Auth Modal ───────────────────────────────────────────────────────────────
+function showAuthModal(tab = 'login') {
+    document.getElementById('authModal').classList.remove('hidden');
+    switchAuthTab(tab);
+}
+function hideAuthModal() { 
+    document.getElementById('authModal').classList.add('hidden'); 
+    clearAuthFields();
+}
+
+function clearAuthFields() {
+    ['loginEmail', 'loginPassword', 'loginTotpCode', 'registerName', 'registerEmail', 'registerPassword', 'forgotEmail', 'forgotRecoveryKey', 'forgotNewPassword'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    ['authLoginError', 'authRegisterError', 'authForgotError'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+}
+
+function switchAuthTab(tab) {
+    const panes = ['login', 'register', 'forgot', 'recovery'];
+    panes.forEach(p => {
+        const el = document.getElementById('auth' + p.charAt(0).toUpperCase() + p.slice(1) + 'Pane');
+        if (el) el.classList.toggle('hidden', p !== tab);
+    });
+    // Tab highlight
+    ['Login', 'Register', 'Forgot'].forEach(t => {
+        const btn = document.getElementById('authTab' + t);
+        if (!btn) return;
+        const active = tab === t.toLowerCase();
+        btn.style.color = active ? 'var(--primary)' : 'var(--text-secondary)';
+        btn.style.borderBottom = active ? '2px solid var(--primary)' : '2px solid transparent';
+        btn.style.fontWeight = active ? '700' : '400';
+    });
+}
+
+document.getElementById('navLoginBtn').addEventListener('click', () => showAuthModal('login'));
+document.getElementById('authTabLogin').addEventListener('click', () => switchAuthTab('login'));
+document.getElementById('authTabRegister').addEventListener('click', () => switchAuthTab('register'));
+document.getElementById('authTabForgot').addEventListener('click', () => switchAuthTab('forgot'));
+document.getElementById('authModalCloseBtn').addEventListener('click', hideAuthModal);
+document.getElementById('switchToForgotBtn').addEventListener('click', () => switchAuthTab('forgot'));
+document.getElementById('afterResetLoginBtn').addEventListener('click', () => switchAuthTab('login'));
+
+// Copy recovery key
+document.getElementById('copyRecoveryKeyBtn').addEventListener('click', () => {
+    const key = document.getElementById('recoveryKeyDisplay').textContent;
+    navigator.clipboard.writeText(key).then(() => { document.getElementById('copyRecoveryKeyBtn').textContent = '✓ Copied!'; setTimeout(() => { document.getElementById('copyRecoveryKeyBtn').textContent = '📋 Copy Recovery Key'; }, 2000); });
+});
+document.getElementById('doneRecoveryBtn').addEventListener('click', () => { hideAuthModal(); });
+
+document.getElementById('loginSubmitBtn').addEventListener('click', async () => {
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const totp_code = document.getElementById('loginTotpCode') ? document.getElementById('loginTotpCode').value.trim() : '';
+    const errEl = document.getElementById('authLoginError');
+    errEl.classList.add('hidden');
+    try {
+        const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, totp_code: totp_code || undefined }) });
+        const d = await res.json();
+        if (d.requires2FA) { document.getElementById('login2FAField').classList.remove('hidden'); errEl.textContent = 'Enter your 2FA code below.'; errEl.style.color = '#f59e0b'; errEl.classList.remove('hidden'); return; }
+        if (!d.success) { errEl.textContent = d.error || 'Login failed.'; errEl.classList.remove('hidden'); return; }
+        setToken(d.token);
+        localStorage.setItem('wg_user', JSON.stringify(d.user));
+        updateNavAuth(d.user);
+        hideAuthModal();
+    } catch (e) { errEl.textContent = 'Server error. Is the server running?'; errEl.classList.remove('hidden'); }
+});
+
+document.getElementById('registerSubmitBtn').addEventListener('click', async () => {
+    const name = document.getElementById('registerName').value.trim();
+    const email = document.getElementById('registerEmail').value.trim();
+    const password = document.getElementById('registerPassword').value;
+    const errEl = document.getElementById('authRegisterError');
+    errEl.classList.add('hidden');
+    try {
+        const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, password }) });
+        const d = await res.json();
+        if (!d.success) { errEl.textContent = d.error || 'Registration failed.'; errEl.classList.remove('hidden'); return; }
+        setToken(d.token);
+        localStorage.setItem('wg_user', JSON.stringify(d.user));
+        updateNavAuth(d.user);
+        // Show recovery key pane — MUST be acknowledged before dismissing
+        if (d.recoveryKey) {
+            document.getElementById('recoveryKeyDisplay').textContent = d.recoveryKey;
+            switchAuthTab('recovery');
+        } else {
+            hideAuthModal();
+        }
+    } catch (e) { errEl.textContent = 'Server error.'; errEl.classList.remove('hidden'); }
+});
+
+// ─── Forgot Password ─────────────────────────────────────────────────────────
+document.getElementById('forgotSubmitBtn').addEventListener('click', async () => {
+    const email = document.getElementById('forgotEmail').value.trim();
+    const recoveryKey = document.getElementById('forgotRecoveryKey').value.trim();
+    const newPassword = document.getElementById('forgotNewPassword').value;
+    const errEl = document.getElementById('authForgotError');
+    errEl.classList.add('hidden');
+    document.getElementById('forgotSuccessPane').classList.add('hidden');
+    if (!email || !recoveryKey || !newPassword) { errEl.textContent = 'All fields are required.'; errEl.classList.remove('hidden'); return; }
+    try {
+        const res = await fetch('/api/auth/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, recoveryKey, newPassword }) });
+        const d = await res.json();
+        if (!d.success) { errEl.textContent = d.error || 'Reset failed.'; errEl.classList.remove('hidden'); return; }
+        // Show success + new recovery key
+        document.getElementById('newRecoveryKeyDisplay').textContent = d.newRecoveryKey || '';
+        document.getElementById('forgotSuccessPane').classList.remove('hidden');
+        document.getElementById('forgotNewPassword').value = '';
+        document.getElementById('forgotRecoveryKey').value = '';
+    } catch (e) { errEl.textContent = 'Server error.'; errEl.classList.remove('hidden'); }
+});
+
+// ─── User Menu Dropdown ───────────────────────────────────────────────────────
+document.getElementById('userMenuBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const d = document.getElementById('userDropdown');
+    d.style.display = d.style.display === 'none' ? 'block' : 'none';
+});
+document.addEventListener('click', () => { const d = document.getElementById('userDropdown'); if (d) d.style.display = 'none'; });
+
+document.getElementById('dropLogoutBtn').addEventListener('click', () => { 
+    clearToken(); 
+    updateNavAuth(null); 
+    clearAuthFields();
+    document.getElementById('userDropdown').style.display = 'none'; 
+});
+
+// ─── API Key Modal ────────────────────────────────────────────────────────────
+document.getElementById('dropApiKeyBtn').addEventListener('click', async () => {
+    document.getElementById('userDropdown').style.display = 'none';
+    document.getElementById('apiKeyModal').classList.remove('hidden');
+    // Load existing key info
+    try {
+        const res = await fetch('/api/my-api-key', { headers: { Authorization: `Bearer ${getToken()}` } });
+        const d = await res.json();
+        if (d.keyInfo) {
+            document.getElementById('apiKeyDisplay').textContent = `${d.keyInfo.key_prefix}... (created ${new Date(d.keyInfo.created_at).toLocaleDateString()})`;
+        }
+    } catch (e) {}
+});
+document.getElementById('closeApiKeyModal').addEventListener('click', () => document.getElementById('apiKeyModal').classList.add('hidden'));
+document.getElementById('generateKeyBtn').addEventListener('click', async () => {
+    const res = await fetch('/api/generate-api-key', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` } });
+    const d = await res.json();
+    if (d.apiKey) document.getElementById('apiKeyDisplay').textContent = d.apiKey;
+});
+document.getElementById('copyKeyBtn').addEventListener('click', () => {
+    const text = document.getElementById('apiKeyDisplay').textContent;
+    navigator.clipboard.writeText(text).then(() => { document.getElementById('copyKeyBtn').textContent = '✓ Copied!'; setTimeout(() => { document.getElementById('copyKeyBtn').textContent = 'Copy Key'; }, 2000); });
+});
+
+// ─── 2FA Modal ────────────────────────────────────────────────────────────────
+document.getElementById('drop2FABtn').addEventListener('click', async () => {
+    document.getElementById('userDropdown').style.display = 'none';
+    document.getElementById('twoFAModal').classList.remove('hidden');
+    const res = await fetch('/api/auth/2fa/setup', { method: 'POST', headers: { Authorization: `Bearer ${getToken()}` } });
+    const d = await res.json();
+    if (d.qrCode) document.getElementById('twoFAQrCode').src = d.qrCode;
+});
+document.getElementById('close2FAModal').addEventListener('click', () => document.getElementById('twoFAModal').classList.add('hidden'));
+document.getElementById('twoFAVerifyBtn').addEventListener('click', async () => {
+    const token = document.getElementById('twoFAVerifyCode').value.trim();
+    const errEl = document.getElementById('twoFAError');
+    const res = await fetch('/api/auth/2fa/verify', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` }, body: JSON.stringify({ token }) });
+    const d = await res.json();
+    if (d.success) { document.getElementById('twoFAModal').classList.add('hidden'); alert('✅ 2FA enabled! Your account is now protected.'); }
+    else { errEl.textContent = d.error || 'Invalid code.'; errEl.classList.remove('hidden'); }
+});
+
+// ─── History Dashboard ────────────────────────────────────────────────────────
+document.getElementById('navHistoryBtn').addEventListener('click', openDashboard);
+document.getElementById('closeDashboardBtn').addEventListener('click', () => document.getElementById('historyDashboard').classList.add('hidden'));
+
+async function openDashboard() {
+    document.getElementById('historyDashboard').classList.remove('hidden');
+    await Promise.all([loadHeatmap(), loadHistory(), loadDomainList()]);
+}
+
+async function loadHeatmap() {
+    const grid = document.getElementById('heatmapGrid');
+    const empty = document.getElementById('heatmapEmpty');
+    grid.innerHTML = '';
+    try {
+        const res = await fetch('/api/history/heatmap', { headers: { Authorization: `Bearer ${getToken()}` } });
+        const d = await res.json();
+        if (!d.data || d.data.length === 0) { empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+        d.data.forEach(item => {
+            const card = document.createElement('div');
+            card.className = `heatmap-card heatmap-grade-${item.grade}`;
+            card.title = `Last scan: ${new Date(item.created_at).toLocaleString()}`;
+            card.innerHTML = `<div style="font-size:1.6rem;margin-bottom:4px;">${item.grade}</div><div>${item.score}/100</div><div style="font-size:0.75rem;margin-top:4px;opacity:0.8;">${item.domain}</div>`;
+            grid.appendChild(card);
+        });
+    } catch (e) { empty.style.display = 'block'; }
+}
+
+async function loadHistory() {
+    const tbody = document.getElementById('historyTableBody');
+    try {
+        const res = await fetch('/api/history', { headers: { Authorization: `Bearer ${getToken()}` } });
+        const d = await res.json();
+        if (!d.history || d.history.length === 0) { tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-secondary);">No scans yet. Run a scan while logged in!</td></tr>'; return; }
+        const gradeColors = { A:'#10b981', B:'#3b82f6', C:'#f59e0b', D:'#f97316', F:'#ef4444' };
+        tbody.innerHTML = d.history.map(s => `<tr>
+            <td style="font-weight:600;">${s.domain}</td>
+            <td><div style="background:rgba(59,130,246,0.1);border-radius:4px;height:6px;width:100%;max-width:80px;display:inline-block;vertical-align:middle;"><div style="background:${gradeColors[s.grade]||'#64748b'};height:100%;width:${s.score}%;border-radius:4px;"></div></div> <span style="margin-left:6px;">${s.score}</span></td>
+            <td><span style="color:${gradeColors[s.grade]||'#64748b'};font-weight:700;">${s.grade}</span></td>
+            <td style="color:var(--text-secondary);font-size:0.85rem;">${new Date(s.created_at).toLocaleString()}</td>
+        </tr>`).join('');
+    } catch (e) { tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:#ef4444;">Failed to load history.</td></tr>'; }
+}
+
+async function loadDomainList() {
+    const select = document.getElementById('trendDomainSelect');
+    try {
+        const res = await fetch('/api/history/domains', { headers: { Authorization: `Bearer ${getToken()}` } });
+        const d = await res.json();
+        select.innerHTML = '<option value="">Select a domain...</option>';
+        (d.domains || []).forEach(dom => { const o = document.createElement('option'); o.value = dom; o.textContent = dom; select.appendChild(o); });
+    } catch (e) {}
+}
+
+document.getElementById('trendDomainSelect').addEventListener('change', async (e) => {
+    const domain = e.target.value;
+    if (!domain) return;
+    try {
+        const res = await fetch(`/api/history/${encodeURIComponent(domain)}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+        const d = await res.json();
+        renderTrendChart(d.scans || []);
+    } catch (e) {}
+});
+
+function renderTrendChart(scans) {
+    const canvas = document.getElementById('trendChart');
+    if (trendChartInstance) { trendChartInstance.destroy(); trendChartInstance = null; }
+    const labels = scans.map(s => new Date(s.created_at).toLocaleDateString()).reverse();
+    const scores = scans.map(s => s.score).reverse();
+    trendChartInstance = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Security Score',
+                data: scores,
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59,130,246,0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.3,
+                pointBackgroundColor: '#3b82f6',
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#94a3b8' } } },
+            scales: {
+                x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
+                y: { min: 0, max: 100, ticks: { color: '#64748b' }, grid: { color: '#1e293b' } }
+            }
+        }
+    });
+}
+
+// ─── Settings Panel ───────────────────────────────────────────────────────────
+document.getElementById('navSettingsBtn').addEventListener('click', openSettings);
+document.getElementById('closeSettingsBtn').addEventListener('click', () => document.getElementById('settingsPanel').classList.add('hidden'));
+
+async function openSettings() {
+    document.getElementById('settingsPanel').classList.remove('hidden');
+    // Pre-populate white-label from localStorage
+    document.getElementById('settingsWlName').value = localStorage.getItem('wl_name') || '';
+    document.getElementById('settingsWlLogo').value = localStorage.getItem('wl_logo') || '';
+}
+
+document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+    const payload = {
+        slack_webhook: document.getElementById('settingsSlackWebhook').value.trim() || null,
+        jira_url: document.getElementById('settingsJiraUrl').value.trim() || null,
+        jira_email: document.getElementById('settingsJiraEmail').value.trim() || null,
+        jira_token: document.getElementById('settingsJiraToken').value.trim() || null,
+        jira_project: document.getElementById('settingsJiraProject').value.trim() || null,
+        webhook_url: document.getElementById('settingsWebhookUrl').value.trim() || null,
+        whitelabel_name: document.getElementById('settingsWlName').value.trim() || null,
+        whitelabel_logo: document.getElementById('settingsWlLogo').value.trim() || null,
+    };
+    // Save white-label locally for instant apply
+    if (payload.whitelabel_name) localStorage.setItem('wl_name', payload.whitelabel_name); else localStorage.removeItem('wl_name');
+    if (payload.whitelabel_logo) localStorage.setItem('wl_logo', payload.whitelabel_logo); else localStorage.removeItem('wl_logo');
+    applyWhiteLabel();
+
+    const statusEl = document.getElementById('settingsSaveStatus');
+    try {
+        const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` }, body: JSON.stringify(payload) });
+        const d = await res.json();
+        statusEl.textContent = d.success ? '✅ Settings saved successfully!' : ('❌ ' + (d.error || 'Save failed.'));
+        statusEl.style.color = d.success ? '#10b981' : '#ef4444';
+    } catch (e) { statusEl.textContent = '❌ Could not save to server (are you logged in?). White-label applied locally.'; statusEl.style.color = '#f59e0b'; }
+    statusEl.style.display = 'block';
+    setTimeout(() => { statusEl.style.display = 'none'; }, 4000);
+});
+
+// ─── Render New Scan Modules in Results ───────────────────────────────────────
+// Hook into the existing renderResults flow by extending window.renderAdvancedResults
+const _originalRenderAdvanced = window.renderAdvancedResults;
+window.renderAdvancedResults = function(advanced, domain) {
+    if (_originalRenderAdvanced) _originalRenderAdvanced(advanced, domain);
+    renderOwaspMap(advanced.owaspMap);
+    renderGdprResults(advanced.gdpr);
+    renderCmsInfo(advanced.cmsInfo);
+    renderRateLimit(advanced.rateLimit);
+};
+
+function renderOwaspMap(owaspMap) {
+    if (!owaspMap) return;
+    // Find or create OWASP section
+    let section = document.getElementById('owaspSection');
+    if (!section) {
+        section = document.createElement('div');
+        section.id = 'owaspSection';
+        section.className = 'card';
+        const resultsSection = document.getElementById('resultsSection');
+        if (resultsSection) resultsSection.appendChild(section);
+    }
+    const passed = owaspMap.filter(c => c.pass).length;
+    section.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+            <h3 style="font-size:1.1rem;">⚠️ OWASP Top 10 Report Card</h3>
+            <span style="font-size:0.85rem;color:var(--text-secondary);">${passed}/10 categories passing</span>
+        </div>
+        <div class="owasp-grid">
+            ${owaspMap.map(c => `
+                <div class="owasp-item">
+                    <span class="owasp-id">${c.id}</span>
+                    <span class="owasp-name">${c.name}</span>
+                    <span class="owasp-evidence">${c.evidence}</span>
+                    <span class="owasp-badge ${c.pass ? 'owasp-pass' : 'owasp-fail'}">${c.pass ? '✓ PASS' : '✗ FAIL'}</span>
+                </div>
+            `).join('')}
+        </div>`;
+}
+
+function renderGdprResults(gdpr) {
+    if (!gdpr) return;
+    let section = document.getElementById('gdprSection');
+    if (!section) {
+        section = document.createElement('div');
+        section.id = 'gdprSection';
+        section.className = 'card';
+        const resultsSection = document.getElementById('resultsSection');
+        if (resultsSection) resultsSection.appendChild(section);
+    }
+    const riskColor = { 'Low Risk': '#10b981', 'Medium Risk': '#f59e0b', 'High Risk': '#ef4444' }[gdpr.gdprScore] || '#94a3b8';
+    section.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+            <h3 style="font-size:1.1rem;">🍪 GDPR / Privacy Scan</h3>
+            <span style="color:${riskColor};font-weight:700;">${gdpr.gdprScore}</span>
+        </div>
+        ${gdpr.trackers.length > 0
+            ? `<div style="margin-bottom:1rem;">${gdpr.trackers.map(t => `<span class="gdpr-tracker">📡 ${t}</span>`).join('')}</div>`
+            : '<p style="color:#10b981;margin-bottom:0.5rem;">✅ No known tracking scripts detected.</p>'
+        }
+        ${gdpr.issues.length > 0
+            ? `<div>${gdpr.issues.map(i => `<div style="color:#f97316;font-size:0.88rem;padding:8px;background:rgba(249,115,22,0.08);border-radius:6px;margin-top:6px;">⚠️ ${i}</div>`).join('')}</div>`
+            : ''
+        }`;
+}
+
+function renderCmsInfo(cmsInfo) {
+    if (!cmsInfo) return;
+    let section = document.getElementById('cmsSection');
+    if (!section) {
+        section = document.createElement('div');
+        section.id = 'cmsSection';
+        section.className = 'card';
+        const resultsSection = document.getElementById('resultsSection');
+        if (resultsSection) resultsSection.appendChild(section);
+    }
+    const riskColors = { 'HIGH': '#ef4444', 'MEDIUM': '#f59e0b', 'LOW': '#10b981' };
+    const riskLevel = cmsInfo.risk ? cmsInfo.risk.split(' ')[0] : 'LOW';
+    const riskColor = riskColors[riskLevel] || '#94a3b8';
+    section.innerHTML = `
+        <h3 style="font-size:1.1rem;margin-bottom:1rem;">🔍 CMS Fingerprint</h3>
+        <div class="cms-card-inner">
+            <div style="font-size:2rem;">🏗️</div>
+            <div>
+                <div style="font-weight:700;font-size:1rem;margin-bottom:4px;">${cmsInfo.cms}</div>
+                ${cmsInfo.version && cmsInfo.version !== 'N/A' ? `<div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:6px;">Version: ${cmsInfo.version}</div>` : ''}
+                <div style="font-size:0.85rem;color:${riskColor};">⚠️ ${cmsInfo.risk}</div>
+            </div>
+        </div>`;
+}
+
+function renderRateLimit(rateLimit) {
+    if (!rateLimit) return;
+    let section = document.getElementById('rateLimitSection');
+    if (!section) {
+        section = document.createElement('div');
+        section.id = 'rateLimitSection';
+        section.className = 'card';
+        const resultsSection = document.getElementById('resultsSection');
+        if (resultsSection) resultsSection.appendChild(section);
+    }
+    const ok = rateLimit.protected;
+    section.innerHTML = `
+        <h3 style="font-size:1.1rem;margin-bottom:0.75rem;">🚦 Rate Limiting / DDoS Test</h3>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px;background:rgba(0,0,0,0.1);border-radius:8px;">
+            <span style="font-size:1.8rem;">${ok ? '🛡️' : '⚠️'}</span>
+            <div>
+                <div style="font-weight:600;color:${ok ? '#10b981' : '#ef4444'};">${ok ? 'Protected' : 'Vulnerable'}</div>
+                <div style="font-size:0.85rem;color:var(--text-secondary);margin-top:3px;">${rateLimit.message}</div>
+            </div>
+        </div>`;
+}
+
+// ─── Check auth on page load ───────────────────────────────────────────────
+checkAuthOnLoad();
+applyWhiteLabel();
+

@@ -7,13 +7,50 @@ const urlModule = require('url');
 const dns = require('dns').promises;
 const cheerio = require('cheerio');
 const net = require('net');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
+const cron = require('node-cron');
+const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const GEMINI_API_KEY = "AIzaSyC9HpL3Wj7HLpbUNhKD2WE84XkLEFXvW1E";
+// No hardcoded Gemini API key — users configure their own in Settings
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
+const JWT_SECRET = process.env.JWT_SECRET || 'webguard-super-secret-jwt-key-2024-enterprise';
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ─── Auth Middleware ───────────────────────────────────────────────────────────
+function requireAuth(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch (e) { return res.status(403).json({ error: 'Invalid or expired token.' }); }
+}
+
+function requireApiKey(req, res, next) {
+  const key = req.headers['x-api-key'];
+  if (!key) return res.status(401).json({ error: 'API key required in X-API-Key header.' });
+  const info = db.getApiKeyInfo(key);
+  if (!info) return res.status(403).json({ error: 'Invalid API key.' });
+  req.user = { id: info.uid, email: info.email, role: info.role };
+  next();
+}
+
+function optionalAuth(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token) {
+    try { req.user = jwt.verify(token, JWT_SECRET); } catch (e) { req.user = null; }
+  } else { req.user = null; }
+  next();
+}
 
 // Security Headers Reference
 const SECURITY_HEADERS = {
@@ -566,9 +603,73 @@ function parseHtmlSecurity(html, targetHostname, protocol) {
   return results;
 }
 
-app.post('/api/analyze', async (req, res) => {
+// ─── New Scanning Module Functions ───────────────────────────────────────────
+async function fingerprintCMS(htmlContent, headers) {
+  const html = htmlContent.toLowerCase();
+  const server = (headers['server'] || '').toLowerCase();
+  const xPoweredBy = (headers['x-powered-by'] || '').toLowerCase();
+  if (html.includes('/wp-content/') || html.includes('wp-json')) return { cms: 'WordPress', version: (html.match(/ver=([\.\d]+)/) || [])[1] || 'Unknown', risk: 'HIGH - Check for vulnerable plugins and outdated WordPress core.' };
+  if (html.includes('drupal') || headers['x-drupal-cache']) return { cms: 'Drupal', version: 'Unknown', risk: 'MEDIUM - Ensure Drupal core and all modules are up to date.' };
+  if (html.includes('joomla') || html.includes('/components/com_')) return { cms: 'Joomla', version: 'Unknown', risk: 'MEDIUM - Check Joomla extensions for known CVEs.' };
+  if (xPoweredBy.includes('next.js')) return { cms: 'Next.js', version: (xPoweredBy.match(/next\.js ([\.\d]+)/) || [])[1] || 'Unknown', risk: 'LOW - Verify .env files are not publicly accessible.' };
+  if (xPoweredBy.includes('php')) return { cms: 'PHP Application', version: xPoweredBy, risk: 'MEDIUM - Check PHP version for end-of-life status.' };
+  if (html.includes('shopify')) return { cms: 'Shopify', version: 'Hosted', risk: 'LOW - Check for sensitive data in theme JavaScript.' };
+  return { cms: 'Unknown / Custom', version: 'N/A', risk: 'LOW - No common CMS detected.' };
+}
+
+async function checkRateLimit(baseUrl) {
   try {
-    const { url, headers: customReqHeaders } = req.body;
+    const endpoints = [baseUrl + '/api/login', baseUrl + '/login', baseUrl + '/api/auth/login'];
+    for (const ep of endpoints) {
+      let got429 = false;
+      const promises = Array(15).fill(0).map(() => axios.post(ep, { username: 'test', password: 'test' }, { timeout: 3000, validateStatus: () => true }));
+      const results = await Promise.all(promises);
+      got429 = results.some(r => r.status === 429);
+      if (got429) return { protected: true, message: `Rate limiting active on ${ep} (HTTP 429 detected).` };
+    }
+    return { protected: false, message: 'No rate limiting detected on common login/API endpoints. Brute-force attacks are possible.' };
+  } catch (e) { return { protected: false, message: 'Could not fully test rate limiting.' }; }
+}
+
+async function scanGdprPrivacy(htmlContent, pageUrl) {
+  const html = htmlContent.toLowerCase();
+  const trackers = [];
+  const issues = [];
+  if (html.includes('facebook.net/en_us/fbevents') || html.includes('connect.facebook.net')) trackers.push('Facebook Pixel');
+  if (html.includes('googletagmanager.com') || html.includes('gtag(')) trackers.push('Google Tag Manager / Analytics');
+  if (html.includes('hotjar.com')) trackers.push('Hotjar Session Recording');
+  if (html.includes('intercom.io')) trackers.push('Intercom');
+  if (html.includes('clarity.ms')) trackers.push('Microsoft Clarity');
+  if (html.includes('tiktok.com/i18n/pixel')) trackers.push('TikTok Pixel');
+  if (html.includes('linkedin.com/insight')) trackers.push('LinkedIn Insight Tag');
+  if (trackers.length > 0 && !html.includes('cookieconsent') && !html.includes('cookie-consent') && !html.includes('gdpr')) {
+    issues.push('Trackers found but NO cookie consent banner detected — potential GDPR/CCPA violation.');
+  }
+  if (html.includes('document.cookie')) issues.push('First-party cookie manipulation detected in JavaScript.');
+  const gdprScore = trackers.length === 0 ? 'Low Risk' : issues.length > 0 ? 'High Risk' : 'Medium Risk';
+  return { trackers, issues, gdprScore };
+}
+
+function mapOwaspTop10(findings) {
+  const { cspIssues = [], dast = {}, cors = {}, cookies = [], openPorts = [], leaks = [], dirListing = false, fuzzer = {} } = findings;
+  const categories = [
+    { id: 'A01', name: 'Broken Access Control', pass: !dirListing && !(fuzzer.criticalExposed && fuzzer.criticalExposed.length > 0), evidence: dirListing ? 'Directory listing enabled' : 'No exposed admin paths found' },
+    { id: 'A02', name: 'Cryptographic Failures', pass: findings.isHttps && !(leaks.some(l => l.includes('Server version'))), evidence: !findings.isHttps ? 'Site is NOT using HTTPS' : 'HTTPS enabled' },
+    { id: 'A03', name: 'Injection (XSS/SQLi)', pass: !(dast.xss && dast.xss.length > 0) && !(dast.sqli && dast.sqli.length > 0), evidence: (dast.xss && dast.xss.length > 0) ? `${dast.xss.length} XSS vectors found` : 'No injection found' },
+    { id: 'A04', name: 'Insecure Design', pass: true, evidence: 'No structural design flaws automatically detected.' },
+    { id: 'A05', name: 'Security Misconfiguration', pass: !cors.vulnerable && leaks.length === 0, evidence: cors.vulnerable ? 'CORS misconfigured' : leaks.length > 0 ? leaks[0] : 'No misconfigurations found' },
+    { id: 'A06', name: 'Vulnerable Components', pass: !(findings.libraries && findings.libraries.some(l => l.outdated)), evidence: 'Check outdated libraries in scan results' },
+    { id: 'A07', name: 'Auth & Session Failures', pass: cookies.every(c => c.httpOnly && c.secure), evidence: cookies.some(c => !c.httpOnly) ? 'Cookies missing HttpOnly flag' : 'Cookie flags look secure' },
+    { id: 'A08', name: 'Software Data Integrity', pass: findings.sriAnalysis ? findings.sriAnalysis.allIntegrityPresent : true, evidence: 'Check SRI attributes in scan results' },
+    { id: 'A09', name: 'Security Logging Failures', pass: !!findings.securityTxt, evidence: findings.securityTxt ? 'security.txt found' : 'No security.txt — no responsible disclosure policy' },
+    { id: 'A10', name: 'Server-Side Request Forgery', pass: true, evidence: 'SSRF requires authenticated endpoint testing.' }
+  ];
+  return categories;
+}
+
+app.post('/api/analyze', optionalAuth, async (req, res) => {
+  try {
+    const { url, headers: customReqHeaders, sessionCookie, bearerToken } = req.body;
     let target = url.trim();
     if (!target.startsWith('http')) target = 'https://' + target;
 
@@ -585,6 +686,9 @@ app.post('/api/analyze', async (req, res) => {
             if (key && val) customHeaders[key.trim()] = val.join(':').trim();
         });
     }
+    // Authenticated Scanning: Inject session cookie or Bearer token
+    if (sessionCookie) customHeaders['Cookie'] = sessionCookie;
+    if (bearerToken) customHeaders['Authorization'] = `Bearer ${bearerToken}`;
 
     const response = await axios.get(parsedUrl.toString(), {
       headers: customHeaders,
@@ -651,9 +755,10 @@ app.post('/api/analyze', async (req, res) => {
     if (htmlSecurity.domSec.sinks > 0) currentScore -= 10;
     if (htmlSecurity.mixedContent.length > 0) currentScore -= 10;
 
-    // AI Insights Module
+    // AI Insights Module — uses user's own Gemini API key from Settings
     let aiInsights = null;
-    if (GEMINI_API_KEY) {
+    const geminiKey = (req.user && req.user.id) ? (db.getGeminiKey(req.user.id) || GEMINI_API_KEY) : GEMINI_API_KEY;
+    if (geminiKey) {
        const phishingPrompt = `Analyze this text extracted from a website homepage and determine if it sounds like a phishing site, scam, or highly suspicious. Reply with a brief 2-sentence analysis and a scam probability score (0-100%). Text:\n${htmlSecurity.homeText.substring(0, 3000)}`;
        const attackChainPrompt = `You are a security expert. The following vulnerabilities were found on ${hostname}: Missing CSP, ${openPorts.length > 0 ? 'Open ports: ' + openPorts.join(', ') : ''}, Missing HSTS: ${!hstsPreloaded}. Write a 3-sentence narrative explaining a potential attack chain hackers could use based on these specific flaws.`;
        
@@ -663,66 +768,307 @@ app.post('/api/analyze', async (req, res) => {
        }
        
        const [phishingAnalysis, attackNarrative, jsAnalysis] = await Promise.all([
-           callGemini(GEMINI_API_KEY, phishingPrompt),
-           callGemini(GEMINI_API_KEY, attackChainPrompt),
-           callGemini(GEMINI_API_KEY, jsPrompt)
+           callGemini(geminiKey, phishingPrompt),
+           callGemini(geminiKey, attackChainPrompt),
+           callGemini(geminiKey, jsPrompt)
        ]);
        aiInsights = { phishingAnalysis, attackNarrative, jsAnalysis };
+    } else {
+       aiInsights = { phishingAnalysis: '⚙️ No Gemini API key configured. Add your key in Settings to enable AI analysis.', attackNarrative: null, jsAnalysis: null };
     }
 
     const grade = calculateGrade(Math.min(100, Math.max(0, currentScore)));
 
-    return res.json({
-      success: true, domain: hostname, score: Math.min(100, Math.max(0, currentScore)), grade,
+    const finalScore = Math.min(100, Math.max(0, currentScore));
+    const [cmsInfo, rateLimitResult, gdprResult] = await Promise.all([
+      fingerprintCMS(String(response.data), headers),
+      checkRateLimit(baseUrl),
+      scanGdprPrivacy(String(response.data), parsedUrl.toString())
+    ]);
+    const owaspMap = mapOwaspTop10({ isHttps, cspIssues: cspEval.issues, dast, cors, cookies: cookieAnalysis, openPorts, leaks, dirListing, fuzzer, securityTxt, libraries: htmlSecurity.libraries, sriAnalysis: htmlSecurity.sriAnalysis });
+
+    const responsePayload = {
+      success: true, domain: hostname, score: finalScore, grade,
       headersFound: auditResults.filter(h => h.status === 'Configured').length,
       isHttps, headers: auditResults, tlsDetails, aiInsights,
       advanced: {
         cookies: cookieAnalysis, cspIssues: cspEval.issues, hasFrameAncestors: cspEval.hasFrameAncestors,
-        dnsSecurity, infra: { server: response.headers['server'] || 'Unknown', poweredBy: response.headers['x-powered-by'] || 'Hidden' }, hstsPreloaded: false, subdomains, cacheSecurity, httpMethods, dirListing,
+        dnsSecurity, infra: { server: response.headers['server'] || 'Unknown', poweredBy: response.headers['x-powered-by'] || 'Hidden' },
+        hstsPreloaded: false, subdomains, cacheSecurity, httpMethods, dirListing,
         domSec: htmlSecurity.domSec, sourceMaps: htmlSecurity.sourceMaps, sriAnalysis: htmlSecurity.sriAnalysis,
         mixedContent: htmlSecurity.mixedContent, libraries: htmlSecurity.libraries, seo: htmlSecurity.seo,
-        auth: htmlSecurity.auth,
-        techStack, refPolicy, refInsecure, cors, leaks, securityTxt, openPorts, brokenLinks, waf,
-        fuzzer, aiScrapers, dast
+        auth: htmlSecurity.auth, techStack, refPolicy, refInsecure, cors, leaks, securityTxt, openPorts, brokenLinks, waf,
+        fuzzer, aiScrapers, dast, cmsInfo, rateLimit: rateLimitResult, gdpr: gdprResult, owaspMap
       }
-    });
+    };
+
+    // Save scan to history database
+    if (req.user && req.user.id) {
+      try {
+        db.saveScan(req.user.id, hostname, finalScore, grade, JSON.stringify({ score: finalScore, grade, isHttps, headers: auditResults, advanced: responsePayload.advanced }));
+        // Fire integrations asynchronously
+        const settings = db.getSettings(req.user.id);
+        fireIntegrations(settings, hostname, finalScore, grade, responsePayload.advanced).catch(() => {});
+      } catch (dbErr) { console.error('DB save error:', dbErr.message); }
+    }
+
+    return res.json(responsePayload);
   } catch (error) { return res.status(500).json({ error: `Connection failed: ${error.message}` }); }
 });
 
 app.post('/api/chat', async (req, res) => {
     const { message, context } = req.body;
-    if (!GEMINI_API_KEY || !message) return res.status(400).json({ error: 'Missing key or message' });
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    let userId = null;
+    try { if (token) userId = jwt.verify(token, JWT_SECRET).id; } catch(e) {}
+    const geminiKey = userId ? (db.getGeminiKey(userId) || GEMINI_API_KEY) : GEMINI_API_KEY;
+    if (!geminiKey || !message) return res.status(400).json({ error: 'No Gemini API key configured. Add your key in Settings → AI Configuration.' });
     const prompt = `You are Akhil WebGuard AI, a cybersecurity assistant helping a user understand their website audit.
 Context Data: ${JSON.stringify(context).substring(0, 3000)}
 User Question: ${message}
 Reply concisely and practically in 2-3 sentences. Do not use markdown backticks for formatting, just plain text.`;
-    const reply = await callGemini(GEMINI_API_KEY, prompt);
+    const reply = await callGemini(geminiKey, prompt);
     res.json({ reply });
 });
 
 // SAST Endpoint
 app.post('/api/sast', async (req, res) => {
     const { code } = req.body;
-    if (!GEMINI_API_KEY || !code) return res.status(400).json({ error: 'Missing key or code' });
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    let userId = null;
+    try { if (token) userId = jwt.verify(token, JWT_SECRET).id; } catch(e) {}
+    const geminiKey = userId ? (db.getGeminiKey(userId) || GEMINI_API_KEY) : GEMINI_API_KEY;
+    if (!geminiKey || !code) return res.status(400).json({ error: 'No Gemini API key configured or code missing. Add your key in Settings → AI Configuration.' });
     const prompt = `You are an expert SAST (Static Application Security Testing) auditor. Analyze the following source code for security vulnerabilities (e.g. hardcoded secrets, SQLi, weak crypto, missing auth checks). 
 Code:\n${code.substring(0, 8000)}\n
 Reply with a concise, formatted markdown report outlining the vulnerabilities and how to fix them.`;
-    const reply = await callGemini(GEMINI_API_KEY, prompt);
+    const reply = await callGemini(geminiKey, prompt);
     res.json({ report: reply });
 });
 
 // PoC Exploit Generator
 app.post('/api/generate-poc', async (req, res) => {
     const { vulnContext } = req.body;
-    if (!GEMINI_API_KEY || !vulnContext) return res.status(400).json({ error: 'Missing key or context' });
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    let userId = null;
+    try { if (token) userId = jwt.verify(token, JWT_SECRET).id; } catch(e) {}
+    const geminiKey = userId ? (db.getGeminiKey(userId) || GEMINI_API_KEY) : GEMINI_API_KEY;
+    if (!geminiKey || !vulnContext) return res.status(400).json({ error: 'No Gemini API key configured. Add your key in Settings → AI Configuration.' });
     const prompt = `You are a red team security engineer. I have discovered the following vulnerability on a target using a DAST scanner:
 ${vulnContext}
 Write a short, educational Python Proof-of-Concept (PoC) script using the 'requests' library that demonstrates how this exploit works. Do not explain the code too much, just return the raw python code in a markdown block.`;
-    const reply = await callGemini(GEMINI_API_KEY, prompt);
+    const reply = await callGemini(geminiKey, prompt);
     res.json({ poc: reply });
 });
 
-// --- NEW ENTERPRISE FEATURES: BULK, WATCHLIST, CRON ---
+// ─── Integration Fire Function ────────────────────────────────────────────────
+async function fireIntegrations(settings, domain, score, grade, advanced) {
+  const criticals = [];
+  if (advanced.dast) {
+    if (advanced.dast.xss && advanced.dast.xss.length > 0) criticals.push(`XSS: ${advanced.dast.xss.length} vector(s)`);
+    if (advanced.dast.sqli && advanced.dast.sqli.length > 0) criticals.push(`SQLi: ${advanced.dast.sqli.length} vector(s)`);
+  }
+  if (advanced.fuzzer && advanced.fuzzer.criticalExposed && advanced.fuzzer.criticalExposed.length > 0) criticals.push(`Exposed paths: ${advanced.fuzzer.criticalExposed.length}`);
+
+  // Slack Webhook
+  if (settings.slack_webhook && criticals.length > 0) {
+    try {
+      await axios.post(settings.slack_webhook, {
+        text: `🚨 *WebGuard Alert: ${domain}*\nScore: ${score}/100 (${grade})\nCritical Findings: ${criticals.join(', ')}\n_Scan completed at ${new Date().toISOString()}_`
+      }, { timeout: 5000 });
+    } catch (e) { console.error('[Slack]', e.message); }
+  }
+
+  // Custom Webhook
+  if (settings.webhook_url) {
+    try {
+      await axios.post(settings.webhook_url, { domain, score, grade, criticals, timestamp: new Date().toISOString() }, { timeout: 5000 });
+    } catch (e) { console.error('[Webhook]', e.message); }
+  }
+
+  // Jira Auto-Ticketing for critical findings
+  if (settings.jira_url && settings.jira_email && settings.jira_token && settings.jira_project && criticals.length > 0) {
+    try {
+      await axios.post(`${settings.jira_url}/rest/api/3/issue`, {
+        fields: {
+          project: { key: settings.jira_project },
+          summary: `[WebGuard] Critical vulnerabilities found on ${domain}`,
+          description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: `Score: ${score}/100. Findings: ${criticals.join(', ')}` }] }] },
+          issuetype: { name: 'Bug' }, priority: { name: 'High' }
+        }
+      }, {
+        auth: { username: settings.jira_email, password: settings.jira_token },
+        headers: { 'Content-Type': 'application/json' }, timeout: 8000
+      });
+    } catch (e) { console.error('[Jira]', e.message); }
+  }
+}
+
+// ─── Auth Routes ──────────────────────────────────────────────────────────────
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    if (!email || !password || !name) return res.status(400).json({ error: 'Email, password and name are required.' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    const existing = db.getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'An account with this email already exists.' });
+    const hash = await bcrypt.hash(password, 12);
+    const result = db.createUser(email, hash, name);
+    const user = db.getUserById(result.lastInsertRowid);
+    // Generate account recovery key — shown ONCE, never stored in plaintext
+    const crypto = require('crypto');
+    const recoveryKey = 'WGR-' + crypto.randomBytes(12).toString('hex').toUpperCase().match(/.{4}/g).join('-');
+    db.setRecoveryKey(user.id, recoveryKey);
+    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ success: true, token, recoveryKey, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password, totp_code } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+    const user = db.getUserByEmail(email);
+    if (!user) return res.status(401).json({ error: 'Invalid email or password.' });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ error: 'Invalid email or password.' });
+    // 2FA check
+    if (user.totp_enabled) {
+      if (!totp_code) return res.status(200).json({ requires2FA: true });
+      const verified = speakeasy.totp.verify({ secret: user.totp_secret, encoding: 'base32', token: totp_code, window: 2 });
+      if (!verified) return res.status(401).json({ error: 'Invalid 2FA code.' });
+    }
+    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, role: user.role, totp_enabled: user.totp_enabled } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { email, recoveryKey, newPassword } = req.body;
+    if (!email || !recoveryKey || !newPassword) return res.status(400).json({ error: 'Email, recovery key, and new password are required.' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+    const newHash = await bcrypt.hash(newPassword, 12);
+    const success = db.resetPasswordWithKey(email, recoveryKey.trim(), newHash);
+    if (!success) return res.status(401).json({ error: 'Invalid email or recovery key. Keys can only be used once.' });
+    // Generate a fresh recovery key so the user has one going forward
+    const crypto = require('crypto');
+    const newRecoveryKey = 'WGR-' + crypto.randomBytes(12).toString('hex').toUpperCase().match(/.{4}/g).join('-');
+    const user = db.getUserByEmail(email);
+    db.setRecoveryKey(user.id, newRecoveryKey);
+    res.json({ success: true, newRecoveryKey, message: 'Password reset successfully. Save your new recovery key — it replaces the old one.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/auth/2fa/setup', requireAuth, async (req, res) => {
+  try {
+    const secret = speakeasy.generateSecret({ name: `WebGuard (${req.user.email})`, length: 20 });
+    const qrUrl = await QRCode.toDataURL(secret.otpauth_url);
+    db.updateUserTOTP(req.user.id, secret.base32, false); // save secret but don't enable yet
+    res.json({ success: true, secret: secret.base32, qrCode: qrUrl });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/auth/2fa/verify', requireAuth, async (req, res) => {
+  try {
+    const { token } = req.body;
+    const user = db.getUserByEmail(req.user.email);
+    const verified = speakeasy.totp.verify({ secret: user.totp_secret, encoding: 'base32', token, window: 2 });
+    if (!verified) return res.status(400).json({ error: 'Invalid code. Try again.' });
+    db.updateUserTOTP(req.user.id, user.totp_secret, true);
+    res.json({ success: true, message: '2FA enabled successfully.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  const user = db.getUserById(req.user.id);
+  res.json({ success: true, user });
+});
+
+// ─── Scan History Routes ──────────────────────────────────────────────────────
+app.get('/api/history', requireAuth, (req, res) => {
+  const history = db.getScanHistory(req.user.id, 100);
+  res.json({ success: true, history });
+});
+
+app.get('/api/history/domains', requireAuth, (req, res) => {
+  const domains = db.getAllDomainsForUser(req.user.id);
+  res.json({ success: true, domains: domains.map(d => d.domain) });
+});
+
+app.get('/api/history/heatmap', requireAuth, (req, res) => {
+  const data = db.getLatestScanPerDomain(req.user.id);
+  res.json({ success: true, data });
+});
+
+app.get('/api/history/:domain', requireAuth, (req, res) => {
+  const scans = db.getScansByDomain(req.user.id, req.params.domain, 30);
+  res.json({ success: true, domain: req.params.domain, scans });
+});
+
+// ─── API Key Routes ───────────────────────────────────────────────────────────
+app.post('/api/generate-api-key', requireAuth, (req, res) => {
+  const rawKey = db.generateApiKey(req.user.id, req.body.label || 'Default Key');
+  res.json({ success: true, apiKey: rawKey, message: 'Store this key securely — it will not be shown again.' });
+});
+
+app.get('/api/my-api-key', requireAuth, (req, res) => {
+  const info = db.getApiKeyForUser(req.user.id);
+  res.json({ success: true, keyInfo: info });
+});
+
+// ─── Integration Settings Routes ─────────────────────────────────────────────
+app.get('/api/settings', requireAuth, (req, res) => {
+  const settings = db.getSettings(req.user.id);
+  // Never return tokens in full — mask them
+  if (settings.jira_token) settings.jira_token = settings.jira_token.substring(0, 6) + '...';
+  if (settings.slack_webhook) settings.slack_webhook = settings.slack_webhook.substring(0, 30) + '...';
+  res.json({ success: true, settings });
+});
+
+app.post('/api/settings', requireAuth, (req, res) => {
+  try {
+    db.saveSettings(req.user.id, req.body);
+    res.json({ success: true, message: 'Settings saved successfully.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── REST API v1 (API Key Auth) ───────────────────────────────────────────────
+app.post('/api/v1/scan', requireApiKey, async (req, res) => {
+  // Proxy to the internal analyze logic by making a self-request
+  try {
+    const { url, sessionCookie, bearerToken } = req.body;
+    if (!url) return res.status(400).json({ error: 'url is required.' });
+    // Reuse the full analyze logic by calling it internally
+    const internalRes = await axios.post(`http://localhost:${PORT}/api/analyze`, { url, sessionCookie, bearerToken }, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt.sign({ id: req.user.id, email: req.user.email, role: req.user.role }, JWT_SECRET, { expiresIn: '1m' })}` },
+      timeout: 60000
+    });
+    res.json(internalRes.data);
+  } catch (e) { res.status(500).json({ error: e.response ? e.response.data : e.message }); }
+});
+
+// ─── Extension Quick Score Endpoint (public) ──────────────────────────────────
+app.get('/api/quick-score', async (req, res) => {
+  const { domain } = req.query;
+  if (!domain) return res.status(400).json({ error: 'domain query param required' });
+  try {
+    let target = domain.startsWith('http') ? domain : 'https://' + domain;
+    const response = await axios.get(target, { timeout: 8000, maxRedirects: 3, validateStatus: () => true, headers: { 'User-Agent': 'Mozilla/5.0 AkhilWebGuardAuditor/6.0' } });
+    const headers = response.headers;
+    let score = 10;
+    if (target.startsWith('https')) score += 15;
+    const secHeaders = ['strict-transport-security','content-security-policy','x-frame-options','x-content-type-options','permissions-policy'];
+    secHeaders.forEach(h => { if (headers[h]) score += 10; });
+    const grade = score >= 80 ? 'A' : score >= 65 ? 'B' : score >= 50 ? 'C' : score >= 35 ? 'D' : 'F';
+    res.json({ success: true, domain, score: Math.min(100, score), grade });
+  } catch (e) { res.status(500).json({ error: 'Could not reach domain.' }); }
+});
+
+// --- EXISTING ENTERPRISE FEATURES: BULK, WATCHLIST, CRON ---
 
 app.post('/api/bulk-analyze', async (req, res) => {
     try {

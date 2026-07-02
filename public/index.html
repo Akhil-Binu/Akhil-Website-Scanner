@@ -10,16 +10,34 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="glow-bg"></div>
     
     <header class="app-header">
-        <div class="logo">
-            <span class="shield-icon">🛡️</span>
-            <h1>Akhil Web<span>Guard</span></h1>
+        <div class="logo" id="appLogoWrap">
+            <span class="shield-icon" id="appIcon">🛡️</span>
+            <h1 id="appTitle">Akhil Web<span>Guard</span></h1>
         </div>
-        <p class="tagline">HTTP Headers &amp; TLS Configuration Auditor</p>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <button class="tab-btn" id="navHistoryBtn" style="display:none;">📊 Dashboard</button>
+            <button class="tab-btn" id="navSettingsBtn" style="display:none;">⚙️ Settings</button>
+            <div id="navAuthArea">
+                <button class="btn primary" id="navLoginBtn" style="padding: 8px 18px; font-size: 0.85rem;">Login</button>
+            </div>
+            <div id="navUserMenu" style="display:none; position:relative;">
+                <button id="userMenuBtn" style="background: rgba(255,255,255,0.08); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; color: var(--text-primary); cursor: pointer; display:flex; align-items:center; gap:8px; font-size:0.9rem;">
+                    <span>👤</span> <span id="userNameDisplay">User</span> <span>▾</span>
+                </button>
+                <div id="userDropdown" style="display:none; position:absolute; right:0; top:110%; background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:8px; min-width:180px; z-index:999; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+                    <div style="padding: 8px 12px; font-size:0.8rem; color:var(--text-secondary); border-bottom: 1px solid var(--border); margin-bottom:6px;" id="userEmailDisplay"></div>
+                    <button class="dropdown-item" id="dropApiKeyBtn">🔑 API Key</button>
+                    <button class="dropdown-item" id="drop2FABtn">🔐 Setup 2FA</button>
+                    <button class="dropdown-item" style="color:#ef4444;" id="dropLogoutBtn">↩ Logout</button>
+                </div>
+            </div>
+        </div>
     </header>
 
     <main class="container">
@@ -49,9 +67,13 @@
                     <button id="toggleHeadersBtn" style="background: none; border: none; color: var(--primary); cursor: pointer; display: flex; align-items: center; gap: 5px;">
                         <span id="headerToggleIcon">▶</span> Advanced Options (Auth / Headers)
                     </button>
-                    <div id="customHeadersContainer" class="hidden" style="margin-top: 10px;">
-                        <textarea id="customHeadersInput" placeholder="Cookie: session=123&#10;Authorization: Bearer xyz" rows="3" style="width: 100%; max-width: 600px; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-family: monospace;"></textarea>
-                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 5px;">Paste raw HTTP headers. These will be injected into every scanner request.</p>
+                    <div id="customHeadersContainer" class="hidden" style="margin-top: 10px; display: flex; flex-direction: column; gap: 10px;">
+                        <textarea id="customHeadersInput" placeholder="Cookie: session=abc123&#10;Authorization: Bearer eyJ..." rows="3" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-family: monospace;"></textarea>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <input type="text" id="sessionCookieInput" placeholder="Session Cookie (e.g. session=abc123)" style="flex:1; min-width:200px; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+                            <input type="text" id="bearerTokenInput" placeholder="Bearer Token (e.g. eyJhbGci...)" style="flex:1; min-width:200px; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+                        </div>
+                        <p style="font-size: 0.8rem; color: var(--text-secondary);">Inject a session cookie or bearer token to scan behind login walls. Raw headers are forwarded directly.</p>
                     </div>
                 </div>
             </div>
@@ -655,6 +677,202 @@
         </div>
     </div>
 
+    <!-- ══════════════════════════════════════════════════════════════════════
+         AUTH MODAL (Login / Register)
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="authModal" class="hidden" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:3000;display:flex;justify-content:center;align-items:center;">
+        <div class="card" style="width:90%;max-width:440px;padding:2rem;position:relative;">
+            <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:1.5rem;">
+                <button id="authTabLogin" style="flex:1;padding:10px;background:none;border:none;color:var(--primary);font-weight:700;border-bottom:2px solid var(--primary);cursor:pointer;font-size:1rem;">Login</button>
+                <button id="authTabRegister" style="flex:1;padding:10px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1rem;">Register</button>
+                <button id="authTabForgot" style="flex:1;padding:10px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1rem;">Reset</button>
+            </div>
+            <!-- Login Pane -->
+            <div id="authLoginPane">
+                <h3 style="margin-bottom:1rem;font-size:1.3rem;">Welcome back 👋</h3>
+                <input type="email" id="loginEmail" placeholder="Email address" class="auth-input">
+                <input type="password" id="loginPassword" placeholder="Password" class="auth-input">
+                <div id="login2FAField" class="hidden"><input type="text" id="loginTotpCode" placeholder="6-digit authenticator code" class="auth-input"></div>
+                <div id="authLoginError" class="hidden" style="color:#ef4444;font-size:0.85rem;margin-bottom:0.75rem;"></div>
+                <button id="loginSubmitBtn" class="btn primary" style="width:100%;margin-top:0.5rem;">Sign In</button>
+                <p style="text-align:center;margin-top:1rem;font-size:0.85rem;color:var(--text-secondary);">Forgot your password? <button id="switchToForgotBtn" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:0.85rem;">Reset with account key →</button></p>
+            </div>
+            <!-- Register Pane -->
+            <div id="authRegisterPane" class="hidden">
+                <h3 style="margin-bottom:1rem;font-size:1.3rem;">Create Account 🚀</h3>
+                <input type="text" id="registerName" placeholder="Full name" class="auth-input">
+                <input type="email" id="registerEmail" placeholder="Email address" class="auth-input">
+                <input type="password" id="registerPassword" placeholder="Password (min 8 chars)" class="auth-input">
+                <div id="authRegisterError" class="hidden" style="color:#ef4444;font-size:0.85rem;margin-bottom:0.75rem;"></div>
+                <button id="registerSubmitBtn" class="btn primary" style="width:100%;margin-top:0.5rem;">Create Account</button>
+            </div>
+            <!-- Recovery Key Display Pane (shown once after registration) -->
+            <div id="authRecoveryPane" class="hidden">
+                <div style="text-align:center;margin-bottom:1.5rem;">
+                    <div style="font-size:2.5rem;margin-bottom:0.5rem;">🔐</div>
+                    <h3 style="font-size:1.2rem;margin-bottom:0.5rem;">Save Your Account Recovery Key</h3>
+                    <p style="color:var(--text-secondary);font-size:0.85rem;">This key is shown <strong style="color:#f59e0b;">only once</strong>. Store it somewhere safe — you'll need it to reset your password if you ever forget it.</p>
+                </div>
+                <div id="recoveryKeyDisplay" style="background:#0f172a;padding:16px;border-radius:8px;font-family:monospace;font-size:1.05rem;letter-spacing:0.08em;color:#10b981;text-align:center;word-break:break-all;border:1px solid rgba(16,185,129,0.3);margin-bottom:1rem;"></div>
+                <button id="copyRecoveryKeyBtn" class="btn" style="width:100%;margin-bottom:10px;">📋 Copy Recovery Key</button>
+                <button id="doneRecoveryBtn" class="btn primary" style="width:100%;">I've saved it — Continue →</button>
+                <p style="color:#ef4444;font-size:0.8rem;text-align:center;margin-top:0.75rem;">⚠️ You cannot view this key again. Do not share it.</p>
+            </div>
+            <!-- Forgot / Reset Password Pane -->
+            <div id="authForgotPane" class="hidden">
+                <h3 style="margin-bottom:0.5rem;font-size:1.2rem;">🔑 Reset Password</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1.25rem;">Enter your email and the account recovery key you saved when you registered.</p>
+                <input type="email" id="forgotEmail" placeholder="Email address" class="auth-input">
+                <input type="text" id="forgotRecoveryKey" placeholder="Recovery Key (e.g. WGR-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX)" class="auth-input" style="font-family:monospace;letter-spacing:0.05em;">
+                <input type="password" id="forgotNewPassword" placeholder="New password (min 8 chars)" class="auth-input">
+                <div id="authForgotError" class="hidden" style="color:#ef4444;font-size:0.85rem;margin-bottom:0.75rem;"></div>
+                <button id="forgotSubmitBtn" class="btn primary" style="width:100%;">Reset Password</button>
+                <!-- New recovery key shown after successful reset -->
+                <div id="forgotSuccessPane" class="hidden" style="margin-top:1rem;">
+                    <div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:14px;">
+                        <p style="color:#10b981;font-weight:600;margin-bottom:8px;">✅ Password reset successfully!</p>
+                        <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;">Your new recovery key (save this now — it replaces the old one):</p>
+                        <div id="newRecoveryKeyDisplay" style="font-family:monospace;font-size:0.95rem;color:#10b981;letter-spacing:0.05em;word-break:break-all;"></div>
+                    </div>
+                    <button id="afterResetLoginBtn" class="btn primary" style="width:100%;margin-top:10px;">Go to Login →</button>
+                </div>
+            </div>
+            <button id="authModalCloseBtn" style="position:absolute;top:16px;right:20px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1.3rem;">✖</button>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         API KEY MODAL
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="apiKeyModal" class="hidden" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:3000;display:flex;justify-content:center;align-items:center;">
+        <div class="card" style="width:90%;max-width:560px;padding:2rem;">
+            <h3 style="margin-bottom:1rem;">🔑 Your API Key</h3>
+            <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:1.5rem;">Use this key in the <code>X-API-Key</code> header to call <code>POST /api/v1/scan</code> programmatically from CI/CD or scripts.</p>
+            <div id="apiKeyDisplay" style="background:#0f172a;padding:14px;border-radius:8px;font-family:monospace;word-break:break-all;color:#10b981;font-size:0.9rem;margin-bottom:1rem;">No key generated yet.</div>
+            <div style="display:flex;gap:10px;">
+                <button id="generateKeyBtn" class="btn primary" style="flex:1;">Generate New Key</button>
+                <button id="copyKeyBtn" class="btn" style="flex:1;">Copy Key</button>
+            </div>
+            <p style="color:#f59e0b;font-size:0.8rem;margin-top:1rem;">⚠️ The key is only shown once. Store it securely.</p>
+            <button id="closeApiKeyModal" style="position:absolute;top:16px;right:20px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1.3rem;">✖</button>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         2FA SETUP MODAL
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="twoFAModal" class="hidden" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:3000;display:flex;justify-content:center;align-items:center;">
+        <div class="card" style="width:90%;max-width:420px;padding:2rem;text-align:center;">
+            <h3 style="margin-bottom:0.5rem;">🔐 Enable 2FA</h3>
+            <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1.5rem;">Scan the QR code with Google Authenticator or Authy.</p>
+            <img id="twoFAQrCode" src="" style="width:200px;height:200px;border-radius:8px;background:white;padding:8px;margin:0 auto 1rem;display:block;">
+            <input type="text" id="twoFAVerifyCode" placeholder="Enter 6-digit code to verify" class="auth-input" style="text-align:center;letter-spacing:0.2em;font-size:1.2rem;">
+            <div id="twoFAError" class="hidden" style="color:#ef4444;font-size:0.85rem;margin-bottom:0.75rem;"></div>
+            <button id="twoFAVerifyBtn" class="btn primary" style="width:100%;">Verify & Enable 2FA</button>
+            <button id="close2FAModal" style="position:absolute;top:16px;right:20px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1.3rem;">✖</button>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         HISTORY DASHBOARD PANEL
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="historyDashboard" class="hidden" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:var(--bg-body);z-index:2500;overflow-y:auto;padding:2rem;">
+        <div style="max-width:1100px;margin:0 auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;flex-wrap:wrap;gap:1rem;">
+                <h2 style="font-size:1.8rem;">📊 Security Dashboard</h2>
+                <button id="closeDashboardBtn" class="btn" style="padding:10px 20px;">✖ Close</button>
+            </div>
+            <!-- Heatmap -->
+            <div class="card" style="margin-bottom:1.5rem;">
+                <h3 style="margin-bottom:1rem;font-size:1.1rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;">🗺️ Risk Heatmap — Latest Score Per Domain</h3>
+                <div id="heatmapGrid" style="display:flex;flex-wrap:wrap;gap:12px;min-height:60px;"></div>
+                <p id="heatmapEmpty" style="color:var(--text-secondary);display:none;">No scans recorded yet. Run a scan while logged in!</p>
+            </div>
+            <!-- Trend Chart -->
+            <div class="card" style="margin-bottom:1.5rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:10px;">
+                    <h3 style="font-size:1.1rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;">📈 Security Score Trend</h3>
+                    <select id="trendDomainSelect" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);">
+                        <option value="">Select a domain...</option>
+                    </select>
+                </div>
+                <div style="position:relative;height:280px;"><canvas id="trendChart"></canvas></div>
+            </div>
+            <!-- Scan History Table -->
+            <div class="card">
+                <h3 style="margin-bottom:1rem;font-size:1.1rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;">📋 Recent Scan History</h3>
+                <div style="overflow-x:auto;">
+                    <table id="historyTable" style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+                        <thead><tr style="border-bottom:2px solid var(--border);">
+                            <th style="padding:10px;text-align:left;color:var(--text-secondary);">Domain</th>
+                            <th style="padding:10px;text-align:left;color:var(--text-secondary);">Score</th>
+                            <th style="padding:10px;text-align:left;color:var(--text-secondary);">Grade</th>
+                            <th style="padding:10px;text-align:left;color:var(--text-secondary);">Scanned At</th>
+                        </tr></thead>
+                        <tbody id="historyTableBody"><tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-secondary);">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         SETTINGS PANEL
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="settingsPanel" class="hidden" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:var(--bg-body);z-index:2500;overflow-y:auto;padding:2rem;">
+        <div style="max-width:800px;margin:0 auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;flex-wrap:wrap;gap:1rem;">
+                <h2 style="font-size:1.8rem;">⚙️ Settings & Integrations</h2>
+                <button id="closeSettingsBtn" class="btn" style="padding:10px 20px;">✖ Close</button>
+            </div>
+
+            <!-- Slack -->
+            <div class="card" style="margin-bottom:1.5rem;">
+                <h3 style="margin-bottom:0.5rem;">💬 Slack Integration</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">Receive a Slack alert when critical vulnerabilities are found during a scan.</p>
+                <input type="url" id="settingsSlackWebhook" placeholder="https://hooks.slack.com/services/..." class="auth-input">
+            </div>
+
+            <!-- Jira -->
+            <div class="card" style="margin-bottom:1.5rem;">
+                <h3 style="margin-bottom:0.5rem;">🎫 Jira Integration</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">Auto-create High priority Jira tickets when critical findings are detected.</p>
+                <input type="url" id="settingsJiraUrl" placeholder="https://yourcompany.atlassian.net" class="auth-input">
+                <input type="email" id="settingsJiraEmail" placeholder="jira-account@company.com" class="auth-input">
+                <input type="password" id="settingsJiraToken" placeholder="Jira API Token" class="auth-input">
+                <input type="text" id="settingsJiraProject" placeholder="Project Key (e.g. SEC)" class="auth-input">
+            </div>
+
+            <!-- Custom Webhook -->
+            <div class="card" style="margin-bottom:1.5rem;">
+                <h3 style="margin-bottom:0.5rem;">🔗 Custom Webhook</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">POST full scan JSON to any URL (Zapier, Make.com, your own server).</p>
+                <input type="url" id="settingsWebhookUrl" placeholder="https://your-server.com/webhook" class="auth-input">
+            </div>
+
+            <!-- White-Label -->
+            <div class="card" style="margin-bottom:1.5rem;">
+                <h3 style="margin-bottom:0.5rem;">🎨 White-Label / Branding</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">Customize the app name and logo for your agency or clients.</p>
+                <input type="text" id="settingsWlName" placeholder="Your Company Name (e.g. AcmeSec)" class="auth-input">
+                <input type="url" id="settingsWlLogo" placeholder="Logo URL (optional, https://...)" class="auth-input">
+            </div>
+
+            <!-- Gemini AI Configuration -->
+            <div class="card" style="margin-bottom:1.5rem; border: 1px solid rgba(59,130,246,0.3);">
+                <h3 style="margin-bottom:0.5rem;">🤖 AI Configuration (Gemini)</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">Add your own <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary);">Google AI Studio API key</a> to enable AI-powered phishing detection, attack chain analysis, SAST, and the AI Chat assistant.</p>
+                <input type="password" id="settingsGeminiKey" placeholder="AIzaSy... (your Gemini API key)" class="auth-input" style="font-family:monospace;">
+                <p style="font-size:0.8rem;color:#10b981;">✅ Your key is stored encrypted per-account. It is never shared with other users.</p>
+            </div>
+
+            <div id="settingsSaveStatus" style="display:none;color:#10b981;font-size:0.9rem;margin-bottom:1rem;"></div>
+            <button id="saveSettingsBtn" class="btn primary" style="width:100%;padding:14px;">Save All Settings</button>
+            <p style="margin-top:1rem;color:var(--text-secondary);font-size:0.8rem;text-align:center;">Settings are tied to your user account and stored securely on the server.</p>
+        </div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 </html>
+

@@ -1,0 +1,5 @@
+node_modules/
+webguard.db
+webguard.db-shm
+webguard.db-wal
+.env

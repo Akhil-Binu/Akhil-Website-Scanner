@@ -2,9 +2,18 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const crypto = require('crypto');
 
-const isVercel = process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_REGION;
-const DB_PATH = isVercel ? path.join('/tmp', 'webguard.db') : path.join(__dirname, 'webguard.db');
-const db = new Database(DB_PATH);
+let DB_PATH = path.join(__dirname, 'webguard.db');
+let db;
+try {
+  db = new Database(DB_PATH);
+} catch (e) {
+  if (e.code === 'SQLITE_CANTOPEN') {
+    DB_PATH = path.join('/tmp', 'webguard.db');
+    db = new Database(DB_PATH);
+  } else {
+    throw e;
+  }
+}
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
